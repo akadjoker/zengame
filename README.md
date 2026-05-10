@@ -45,7 +45,7 @@ The engine uses CMake for building. Ensure you have Raylib installed on your sys
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone [<repository-url>](https://github.com/akadjoker/zengame
 cd zengame
 
 # Create build directory
