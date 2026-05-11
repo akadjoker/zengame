@@ -37,8 +37,9 @@ Rectangle Collider2D::get_world_aabb() const
         const float y0 = std::min(p0.y, p1.y);
         const float x1 = std::max(p0.x, p1.x);
         const float y1 = std::max(p0.y, p1.y);
-        // padding mínimo para o broad-phase AABB não ter área zero
-        const float pad = 1.0f;
+        // Segment is zero-thickness in narrow phase, so broad-phase needs a
+        // configurable padding to behave like a usable static blocker/ramp.
+        const float pad = std::max(segment_padding, 1.0f);
         return Rectangle{ x0 - pad, y0 - pad, (x1 - x0) + pad * 2.0f, (y1 - y0) + pad * 2.0f };
     }
     std::vector<Vec2> poly;
@@ -65,7 +66,37 @@ Rectangle Collider2D::get_world_aabb() const
 
 Vec2 Collider2D::get_world_center() const
 {
-    return get_global_position();
+    const Matrix2D m = get_global_transform();
+
+    if (shape == ShapeType::Circle)
+    {
+        return Vec2(m.tx, m.ty);
+    }
+
+    if (shape == ShapeType::Rectangle)
+    {
+        return m.TransformCoords(Vec2(size.x * 0.5f, size.y * 0.5f));
+    }
+
+    if (shape == ShapeType::Segment)
+    {
+        const Vec2 a = points.size() > 0 ? points[0] : Vec2();
+        const Vec2 b = points.size() > 1 ? points[1] : a;
+        return m.TransformCoords((a + b) * 0.5f);
+    }
+
+    if (shape == ShapeType::Polygon && !points.empty())
+    {
+        Vec2 acc(0.0f, 0.0f);
+        for (const Vec2& p : points)
+        {
+            acc += p;
+        }
+        acc /= static_cast<float>(points.size());
+        return m.TransformCoords(acc);
+    }
+
+    return Vec2(m.tx, m.ty);
 }
 
 float Collider2D::get_world_radius() const

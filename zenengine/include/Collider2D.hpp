@@ -23,6 +23,7 @@ public:
     float radius = 16.0f;
     std::vector<Vec2> points;
     bool one_sided = false;  
+    float segment_padding = 12.0f;
 
     void get_world_segment(Vec2& p0, Vec2& p1) const;
     Rectangle get_world_aabb() const;

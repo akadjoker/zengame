@@ -68,6 +68,7 @@ void Node::add_child(Node* child)
 
     if (m_in_tree)
     {
+        child->set_tree_recursive_internal(m_tree);
         child->_do_enter_tree();
         child->_do_ready();
     }
@@ -84,6 +85,7 @@ Node* Node::remove_child(Node* child)
                 child->_do_exit_tree();
             }
 
+            child->set_tree_recursive_internal(nullptr);
             child->m_parent = nullptr;
             m_children.erase(it);
             mark_children_draw_order_dirty();
@@ -250,6 +252,19 @@ void Node::sort_children_for_draw()
             return a->get_draw_order() < b->get_draw_order();
         });
     m_children_draw_order_dirty = false;
+}
+
+void Node::set_tree_recursive_internal(SceneTree* tree)
+{
+    m_tree = tree;
+
+    for (Node* child : m_children)
+    {
+        if (child)
+        {
+            child->set_tree_recursive_internal(tree);
+        }
+    }
 }
 
 // ----------------------------------------------------------

@@ -52,6 +52,33 @@ public:
     SceneTree& operator=(const SceneTree&) = delete;
 
     // ----------------------------------------------------------
+    // Node factory  — never use new directly
+    // ----------------------------------------------------------
+
+    // Create a node of type T. If name is empty, T's own default name is used.
+    // SceneTree does NOT own the node until it is added to the tree.
+    // Example:
+    //   auto* sprite = tree.create<Sprite2D>("Player");
+    //   root->add_child(sprite);
+    template<typename T>
+    T* create(const std::string& name = "")
+    {
+        return name.empty() ? new T() : new T(name);
+    }
+
+    // Create a node and immediately add it as a child of parent.
+    // Returns the newly created node (already parented).
+    // Example:
+    //   auto* label = tree.create<TextNode2D>(root, "HUD_Label");
+    template<typename T>
+    T* create(Node* parent, const std::string& name = "")
+    {
+        T* node = name.empty() ? new T() : new T(name);
+        if (parent) parent->add_child(node);
+        return node;
+    }
+
+    // ----------------------------------------------------------
     // Scene management
     // ----------------------------------------------------------
 
@@ -79,6 +106,18 @@ public:
     void set_debug_draw_flags(uint32_t flags);
     uint32_t get_debug_draw_flags() const;
     bool has_debug_draw_flag(DebugDrawFlags flag) const;
+
+    // Load all tile layers from a .tmx file and add them as children of parent.
+    // Each layer becomes a separate TileMap2D child node.
+    // Returns the number of layers created, or -1 on parse error.
+    // Never throws — errors are logged via TraceLog.
+    int load_tilemap_from_tmx(const char* tmx_path, Node* parent);
+
+    // Parse all <objectgroup> elements from a .tmx file.
+    // Creates one StaticBody2D + Collider2D per object and adds them to parent.
+    // Supports rectangle, ellipse and polygon objects.
+    // Returns the number of collision bodies created, or -1 on parse error.
+    int load_collision_from_tmx(const char* tmx_path, Node* parent);
 
 private:
     struct DebugContact
