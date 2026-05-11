@@ -11,6 +11,7 @@ View2D::View2D(const std::string& p_name)
     : Node2D(p_name)
     , screen_center(0.0f, 0.0f)
 {
+    node_type = NodeType::View2D;
     zoom_punch.base_zoom = zoom;
 }
 

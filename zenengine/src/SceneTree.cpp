@@ -21,9 +21,9 @@ static void CollectCollisionObjects(Node* node, std::vector<CollisionObject2D*>&
     {
         return;
     }
-    if (auto* co = dynamic_cast<CollisionObject2D*>(node))
+    if (node->is_collision_obj())
     {
-        out.push_back(co);
+        out.push_back(static_cast<CollisionObject2D*>(node));
     }
     for (size_t i = 0; i < node->get_child_count(); ++i)
     {
@@ -51,9 +51,13 @@ static View2D* FindCurrentCamera(Node* node)
         return nullptr;
     }
 
-    if (auto* cam = dynamic_cast<View2D*>(node); cam && cam->is_current && cam->visible)
+    if (node->is_a(NodeType::View2D))
     {
-        return cam;
+        View2D* cam = static_cast<View2D*>(node);
+        if (cam->is_current && cam->visible)
+        {
+            return cam;
+        }
     }
 
     for (size_t i = 0; i < node->get_child_count(); ++i)
@@ -223,6 +227,11 @@ void SceneTree::process(float dt)
 {
     if (m_root && m_running)
     {
+        // Advance the per-frame transform cache counter so all Node2D
+        // cached world matrices are lazily recomputed on first access.
+        static uint32_t s_frame_counter = 0;
+        Node2D::begin_frame(++s_frame_counter);
+
         m_root->propagate_update(dt);
         update_physics();
         cleanup_queued_nodes(m_root);
@@ -307,6 +316,7 @@ void SceneTree::query_collision_candidates(const Rectangle& area,
     m_physics_hash.query_aabb(area, ids);
     out_candidates.reserve(ids.size());
 
+    std::vector<Collider2D*> cols;
     for (int id : ids)
     {
         auto it = m_physics_by_id.find(id);
@@ -323,7 +333,6 @@ void SceneTree::query_collision_candidates(const Rectangle& area,
         {
             continue;
         }
-        std::vector<Collider2D*> cols;
         obj->get_colliders(cols);
         bool any_visible = false;
         for (Collider2D* col : cols)
@@ -388,8 +397,9 @@ void SceneTree::draw_debug(Node* node) const
         return;
     }
 
-    if (Node2D* n2d = dynamic_cast<Node2D*>(node))
+    if (node->is_node2d())
     {
+        Node2D* n2d = static_cast<Node2D*>(node);
         const Vec2 p = n2d->get_global_position();
 
         if (has_debug_draw_flag(DEBUG_PIVOT))
@@ -411,27 +421,25 @@ void SceneTree::draw_debug(Node* node) const
         }
     }
 
-    if (has_debug_draw_flag(DEBUG_SHAPES))
+    if (has_debug_draw_flag(DEBUG_SHAPES) && node->is_a(NodeType::Collider2D))
     {
-        if (Collider2D* col = dynamic_cast<Collider2D*>(node))
+        Collider2D* col = static_cast<Collider2D*>(node);
+        if (col->shape == Collider2D::ShapeType::Circle)
         {
-            if (col->shape == Collider2D::ShapeType::Circle)
+            const Vec2 c = col->get_world_center();
+            DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), col->get_world_radius(), GREEN);
+        }
+        else
+        {
+            std::vector<Vec2> poly;
+            col->get_world_polygon(poly);
+            if (poly.size() >= 2)
             {
-                const Vec2 c = col->get_world_center();
-                DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), col->get_world_radius(), GREEN);
-            }
-            else
-            {
-                std::vector<Vec2> poly;
-                col->get_world_polygon(poly);
-                if (poly.size() >= 2)
+                for (size_t i = 0; i < poly.size(); ++i)
                 {
-                    for (size_t i = 0; i < poly.size(); ++i)
-                    {
-                        const Vec2& a = poly[i];
-                        const Vec2& b = poly[(i + 1) % poly.size()];
-                        DrawLineV(Vector2{a.x, a.y}, Vector2{b.x, b.y}, GREEN);
-                    }
+                    const Vec2& a = poly[i];
+                    const Vec2& b = poly[(i + 1) % poly.size()];
+                    DrawLineV(Vector2{a.x, a.y}, Vector2{b.x, b.y}, GREEN);
                 }
             }
         }

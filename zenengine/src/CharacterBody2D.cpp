@@ -24,9 +24,9 @@ void CollectTileMaps(Node* node, std::vector<TileMap2D*>& out)
     {
         return;
     }
-    if (auto* tm = dynamic_cast<TileMap2D*>(node))
+    if (node->is_a(NodeType::TileMap2D))
     {
-        out.push_back(tm);
+        out.push_back(static_cast<TileMap2D*>(node));
     }
     for (size_t i = 0; i < node->get_child_count(); ++i)
     {
@@ -87,6 +87,7 @@ bool CollideWithSolidTiles(Node* root, const Rectangle& box)
 CharacterBody2D::CharacterBody2D(const std::string& p_name)
     : CollisionObject2D(p_name)
 {
+    node_type = NodeType::CharacterBody2D;
     is_trigger = false;
 }
 
@@ -137,11 +138,13 @@ bool CharacterBody2D::place_free(float x, float y)
 
     const Vec2 old_pos = position;
     position = Vec2(x, y);
+    invalidate_transform();
     const Rectangle self_aabb = self_col->get_world_aabb();
 
     if (CollideWithSolidTiles(get_root(), self_aabb))
     {
         position = old_pos;
+        invalidate_transform();
         return false;
     }
 
@@ -170,6 +173,7 @@ bool CharacterBody2D::place_free(float x, float y)
     }
 
     position = old_pos;
+    invalidate_transform();
     return free;
 }
 
@@ -183,11 +187,13 @@ CollisionObject2D* CharacterBody2D::place_meeting(float x, float y)
 
     const Vec2 old_pos = position;
     position = Vec2(x, y);
+    invalidate_transform();
     const Rectangle self_aabb = self_col->get_world_aabb();
 
     if (CollideWithSolidTiles(get_root(), self_aabb))
     {
         position = old_pos;
+        invalidate_transform();
         return nullptr;
     }
 
@@ -216,6 +222,7 @@ CollisionObject2D* CharacterBody2D::place_meeting(float x, float y)
     }
 
     position = old_pos;
+    invalidate_transform();
     return hit;
 }
 
@@ -252,10 +259,12 @@ bool CharacterBody2D::move_and_collide(float vel_x, float vel_y, CollisionInfo2D
 
     position.x += vel_x;
     position.y += vel_y;
+    invalidate_transform();
     if (CollideWithSolidTiles(get_root(), self_col->get_world_aabb()))
     {
         position.x -= vel_x;
         position.y -= vel_y;
+        invalidate_transform();
         if (result)
         {
             result->hit = true;
@@ -397,6 +406,7 @@ bool CharacterBody2D::move_and_slide(Vec2& velocity, float dt, const Vec2& up_di
 
         const Vec2 old_pos = position;
         position += motion;
+        invalidate_transform();
 
         CollisionInfo2D best;
         bool hit = false;
@@ -448,6 +458,7 @@ bool CharacterBody2D::move_and_slide(Vec2& velocity, float dt, const Vec2& up_di
         }
 
         position += normal * (best.depth + skin);
+        invalidate_transform();
 
         const float dot_up = normal.dot(up_direction);
         if (dot_up > 0.7f)

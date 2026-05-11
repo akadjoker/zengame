@@ -9,9 +9,9 @@ static Collider2D* FindColliderRecursive(Node* node)
         return nullptr;
     }
 
-    if (auto* c = dynamic_cast<Collider2D*>(node))
+    if (node->is_a(NodeType::Collider2D))
     {
-        return c;
+        return static_cast<Collider2D*>(node);
     }
 
     for (size_t i = 0; i < node->get_child_count(); ++i)
@@ -31,9 +31,9 @@ static void CollectCollidersRecursive(Node* node, std::vector<Collider2D*>& out)
         return;
     }
 
-    if (auto* c = dynamic_cast<Collider2D*>(node))
+    if (node->is_a(NodeType::Collider2D))
     {
-        out.push_back(c);
+        out.push_back(static_cast<Collider2D*>(node));
     }
 
     for (size_t i = 0; i < node->get_child_count(); ++i)
@@ -45,6 +45,7 @@ static void CollectCollidersRecursive(Node* node, std::vector<Collider2D*>& out)
 CollisionObject2D::CollisionObject2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::CollisionObject2D;
 }
 
 void CollisionObject2D::set_collision_layer_bit(int bit)

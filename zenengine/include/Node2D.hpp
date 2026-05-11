@@ -9,8 +9,9 @@
 // Node2D - Base class for all 2D nodes.
 //
 // Adds a 2D transform (position, rotation, scale, pivot) on top
-// of Node. The global transform is computed by concatenating the
-// local transform with the parent's global transform.
+// of Node. The global transform is cached and recomputed lazily
+// using a per-frame revision counter to avoid redundant work when
+// multiple systems query the same node in one frame.
 //
 // All angles are in DEGREES (converted internally to radians).
 // ============================================================
@@ -43,7 +44,8 @@ public:
     // Returns the local transform matrix (position + rotation + scale + pivot)
     Matrix2D get_local_transform() const;
 
-    // Returns the world-space transform (concatenates all parents)
+    // Returns the world-space transform.
+    // Result is cached per-frame; mark dirty with invalidate_transform().
     Matrix2D get_global_transform() const;
 
     // Returns the world-space position of this node
@@ -52,6 +54,10 @@ public:
 
     Vec2 local_to_world(const Vec2& local_point) const;
     Vec2 world_to_local(const Vec2& world_point) const;
+
+    // Invalidate the cached world transform for this node and all its children.
+    // Call this when you modify position/rotation/scale/pivot manually.
+    void invalidate_transform();
 
     // Move by delta in local space
     void translate(const Vec2& delta);
@@ -74,4 +80,15 @@ public:
     void set_z_index(int value);
     int get_z_index() const;
     int get_draw_order() const override;
+
+    // Called by SceneTree at the start of each frame to reset the cache.
+    // Do not call manually.
+    static void begin_frame(uint32_t frame_id);
+
+private:
+
+    mutable Matrix2D m_cached_world;
+    mutable uint32_t m_cache_frame = 0xFFFFFFFFu;   // frame this cache is valid for
+
+    static uint32_t  s_current_frame;
 };

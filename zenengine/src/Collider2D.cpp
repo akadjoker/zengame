@@ -4,6 +4,7 @@
 Collider2D::Collider2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::Collider2D;
     points = {
         Vec2(0.0f, 0.0f),
         Vec2(32.0f, 0.0f),
@@ -37,10 +38,14 @@ Rectangle Collider2D::get_world_aabb() const
         const float y0 = std::min(p0.y, p1.y);
         const float x1 = std::max(p0.x, p1.x);
         const float y1 = std::max(p0.y, p1.y);
-        // Segment is zero-thickness in narrow phase, so broad-phase needs a
-        // configurable padding to behave like a usable static blocker/ramp.
-        const float pad = std::max(segment_padding, 1.0f);
-        return Rectangle{ x0 - pad, y0 - pad, (x1 - x0) + pad * 2.0f, (y1 - y0) + pad * 2.0f };
+        // Use a square AABB centred on the midpoint with radius = half-diagonal
+        // + segment_padding. This guarantees any rotation of the segment fits
+        // inside its broad-phase AABB and the user can extend it further.
+        const float half_diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) * 0.5f;
+        const float pad = half_diag + std::max(segment_padding, 2.0f);
+        const float cx = (x0 + x1) * 0.5f;
+        const float cy = (y0 + y1) * 0.5f;
+        return Rectangle{ cx - pad, cy - pad, pad * 2.0f, pad * 2.0f };
     }
     std::vector<Vec2> poly;
     get_world_polygon(poly);

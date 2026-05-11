@@ -281,14 +281,15 @@ namespace
         }
 
         // — orientação da normal ——————————————————————————————————————————————————
-        // One-sided: só colide se o polígono está à frente do segmento
         const Vec2 poly_center = ComputeCenter(poly);
-        const Vec2 seg_center = Vec2((sa.x + sb.x) * 0.5f, (sa.y + sb.y) * 0.5f);
-        const Vec2 dir = poly_center - seg_center;
+        const Vec2 seg_center  = Vec2((sa.x + sb.x) * 0.5f, (sa.y + sb.y) * 0.5f);
+        const Vec2 dir         = poly_center - seg_center;
 
+        // One-sided: only collide if the polygon is in front of the segment
+        // (i.e. on the side the normal points toward).
         if (one_sided && Dot(dir, seg_normal) < 0.0f)
         {
-            // polígono está atrás → ignora
+            // polygon is behind the segment — skip
             return false;
         }
 

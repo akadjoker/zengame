@@ -147,6 +147,7 @@ bool triangulate_polygon_poly2tri(const std::vector<Vec2>& poly,
 PolyMesh2D::PolyMesh2D(const std::string& p_name)
     : CollisionObject2D(p_name)
 {
+    node_type = NodeType::PolyMesh2D;
 }
 
 Vec2 PolyMesh2D::normalize_safe(const Vec2& v)

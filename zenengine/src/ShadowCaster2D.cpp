@@ -3,6 +3,7 @@
 ShadowCaster2D::ShadowCaster2D(const std::string &p_name):
     Node2D(p_name)
 {
+    node_type = NodeType::ShadowCaster2D;
 }
 
 std::vector<Vec2> ShadowCaster2D::get_world_segments() const

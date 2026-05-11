@@ -1,5 +1,4 @@
 #include "pch.hpp"
-#include <unordered_set>
 #include "SpatialHash2D.hpp"
 #include "Collision2D.hpp"
 
@@ -44,18 +43,36 @@ bool SpatialHash2D::upsert(const SpatialBody2D& body)
         return false;
     }
 
-    m_bodies[body.id] = body;
-    m_cells.clear();
-
-    std::vector<int64_t> cells;
-    for (const auto& it : m_bodies)
+    // Remove stale cell entries for this body if it already exists
+    auto existing = m_bodies.find(body.id);
+    if (existing != m_bodies.end())
     {
-        cells.clear();
-        raster_aabb(it.second.aabb, cells);
-        for (int64_t key : cells)
+        std::vector<int64_t> old_cells;
+        raster_aabb(existing->second.aabb, old_cells);
+        for (int64_t key : old_cells)
         {
-            m_cells[key].push_back(it.first);
+            auto cit = m_cells.find(key);
+            if (cit == m_cells.end())
+            {
+                continue;
+            }
+            auto& vec = cit->second;
+            vec.erase(std::remove(vec.begin(), vec.end(), body.id), vec.end());
+            if (vec.empty())
+            {
+                m_cells.erase(cit);
+            }
         }
+    }
+
+    m_bodies[body.id] = body;
+
+    // Insert into new cells
+    std::vector<int64_t> new_cells;
+    raster_aabb(body.aabb, new_cells);
+    for (int64_t key : new_cells)
+    {
+        m_cells[key].push_back(body.id);
     }
 
     return true;
@@ -69,20 +86,25 @@ bool SpatialHash2D::remove(int id)
         return false;
     }
 
-    m_bodies.erase(it);
-    m_cells.clear();
-
+    // Remove this body from all cells it occupies
     std::vector<int64_t> cells;
-    for (const auto& kv : m_bodies)
+    raster_aabb(it->second.aabb, cells);
+    for (int64_t key : cells)
     {
-        cells.clear();
-        raster_aabb(kv.second.aabb, cells);
-        for (int64_t key : cells)
+        auto cit = m_cells.find(key);
+        if (cit == m_cells.end())
         {
-            m_cells[key].push_back(kv.first);
+            continue;
+        }
+        auto& vec = cit->second;
+        vec.erase(std::remove(vec.begin(), vec.end(), id), vec.end());
+        if (vec.empty())
+        {
+            m_cells.erase(cit);
         }
     }
 
+    m_bodies.erase(it);
     return true;
 }
 
@@ -104,7 +126,6 @@ void SpatialHash2D::query_aabb(const Rectangle& area, std::vector<int>& out_ids)
     std::vector<int64_t> cells;
     raster_aabb(area, cells);
 
-    std::unordered_set<int> unique_ids;
     for (int64_t key : cells)
     {
         auto it = m_cells.find(key);
@@ -114,15 +135,13 @@ void SpatialHash2D::query_aabb(const Rectangle& area, std::vector<int>& out_ids)
         }
         for (int id : it->second)
         {
-            unique_ids.insert(id);
+            out_ids.push_back(id);
         }
     }
 
-    out_ids.reserve(unique_ids.size());
-    for (int id : unique_ids)
-    {
-        out_ids.push_back(id);
-    }
+    // De-duplicate without a hash set allocation
+    std::sort(out_ids.begin(), out_ids.end());
+    out_ids.erase(std::unique(out_ids.begin(), out_ids.end()), out_ids.end());
 }
 
 void SpatialHash2D::query_pairs(std::vector<std::pair<int, int>>& out_pairs) const

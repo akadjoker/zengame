@@ -29,8 +29,11 @@ float lerp(float a, float b, float t)
 
 float normalize_angle(float angle)
 {
-    while (angle >= 360.0f) angle -= 360.0f;
-    while (angle <    0.0f) angle += 360.0f;
+    angle = std::fmod(angle, 360.0f);
+    if (angle < 0.0f)
+    {
+        angle += 360.0f;
+    }
     return angle;
 }
 
@@ -134,6 +137,10 @@ float Vec2::dot(const Vec2& b) const
 Vec2 Vec2::normalised() const
 {
     float len = magnitude();
+    if (len < 1e-8f)
+    {
+        return Vec2(0.0f, 0.0f);
+    }
     return Vec2(x / len, y / len);
 }
 
@@ -199,6 +206,10 @@ Vec2 Vec2::RotatePoint(float X, float Y, float PivotX, float PivotY, float Angle
 Vec2 Vec2::Normalize(const Vec2 &v)
 {
     float len = v.magnitude();
+    if (len < 1e-8f)
+    {
+        return Vec2(0.0f, 0.0f);
+    }
     return Vec2(v.x / len, v.y / len);
 }
 

@@ -7,6 +7,7 @@
 ParallaxLayer2D::ParallaxLayer2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::ParallaxLayer2D;
 }
 
 void ParallaxLayer2D::_ready()

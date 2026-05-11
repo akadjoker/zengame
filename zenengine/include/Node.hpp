@@ -20,6 +20,27 @@ class SceneTree;
 //   _on_destroy() - bottom-up  : children destroyed before parent
 // ============================================================
 
+// Type tag used to avoid dynamic_cast in hot paths.
+// Each concrete class sets its own tag in its constructor.
+enum class NodeType : uint8_t
+{
+    Node                = 0,
+    Node2D              = 1,
+    Collider2D          = 2,
+    CollisionObject2D   = 3,
+    CharacterBody2D     = 4,
+    StaticBody2D        = 5,
+    Area2D              = 6,
+    Sprite2D            = 7,
+    TileMap2D           = 8,
+    View2D              = 9,
+    ParticleEmitter2D   = 10,
+    Parallax2D          = 11,
+    ParallaxLayer2D     = 12,
+    ShadowCaster2D      = 13,
+    PolyMesh2D          = 14,
+};
+
 class Node
 {
 public:
@@ -27,6 +48,7 @@ public:
     std::string name;
     bool        visible = true;
     bool        active  = true;
+    NodeType    node_type = NodeType::Node;
 
     // ----------------------------------------------------------
     // Constructor / Destructor
@@ -88,6 +110,12 @@ public:
     void mark_children_draw_order_dirty();
     void queue_free();
     bool is_queued_for_deletion() const;
+
+    // Fast type checks — avoids dynamic_cast in hot paths
+    bool is_a(NodeType t)   const { return node_type == t; }
+    bool is_node2d()        const { return static_cast<uint8_t>(node_type) >= static_cast<uint8_t>(NodeType::Node2D); }
+    bool is_collision_obj() const { return static_cast<uint8_t>(node_type) >= static_cast<uint8_t>(NodeType::CollisionObject2D)
+                                        && node_type != NodeType::Collider2D; }
 
     // ----------------------------------------------------------
     // Game loop propagation - called by SceneTree, not subclasses

@@ -25,6 +25,7 @@ float clamp01(float value)
 ParticleEmitter2D::ParticleEmitter2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::ParticleEmitter2D;
     color_start = {255, 255, 255, 0.0f};
     color_end = {255, 255, 255, 0.0f};
     size_start = {1.0f, 0.0f};

@@ -10,6 +10,7 @@
 TileMap2D::TileMap2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::TileMap2D;
 }
 
 void TileMap2D::init(int w, int h, int tile_w, int tile_h, int graph_id)

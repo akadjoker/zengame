@@ -6,6 +6,13 @@
 // Node2D - Implementation
 // ============================================================
 
+uint32_t Node2D::s_current_frame = 0;
+
+void Node2D::begin_frame(uint32_t frame_id)
+{
+    s_current_frame = frame_id;
+}
+
 // ----------------------------------------------------------
 // Constructor
 // ----------------------------------------------------------
@@ -19,6 +26,25 @@ Node2D::Node2D(const std::string& p_name)
     , rotation(0.0f)
     , z_index(0)
 {
+    node_type = NodeType::Node2D;
+}
+
+// ----------------------------------------------------------
+// Transform cache invalidation
+// ----------------------------------------------------------
+
+void Node2D::invalidate_transform()
+{
+    // Bump the cache stamp to force recomputation for this node and children
+    m_cache_frame = 0xFFFFFFFFu;
+
+    for (Node* child : m_children)
+    {
+        if (child->is_node2d())
+        {
+            static_cast<Node2D*>(child)->invalidate_transform();
+        }
+    }
 }
 
 // ----------------------------------------------------------
@@ -27,7 +53,6 @@ Node2D::Node2D(const std::string& p_name)
 
 Matrix2D Node2D::get_local_transform() const
 {
-    // Builds the full local matrix using position, rotation, scale and pivot
     return GetRelativeTransformation(
         position.x, position.y,
         scale.x,    scale.y,
@@ -39,23 +64,25 @@ Matrix2D Node2D::get_local_transform() const
 
 Matrix2D Node2D::get_global_transform() const
 {
-    Matrix2D local = get_local_transform();
-
-    // Walk up the parent chain and concatenate transforms
-    if (m_parent)
+    if (m_cache_frame == s_current_frame)
     {
-        // Only Node2D parents contribute a spatial transform
-        const Node2D* parent2d = dynamic_cast<const Node2D*>(m_parent);
-
-        if (parent2d)
-        {
-            Matrix2D parent_global = parent2d->get_global_transform();
-            // global = parent_global * local
-            return Matrix2DMult(parent_global, local);
-        }
+        return m_cached_world;
     }
 
-    return local;
+    Matrix2D local = get_local_transform();
+
+    if (m_parent && m_parent->is_node2d())
+    {
+        const Node2D* parent2d = static_cast<const Node2D*>(m_parent);
+        m_cached_world = Matrix2DMult(parent2d->get_global_transform(), local);
+    }
+    else
+    {
+        m_cached_world = local;
+    }
+
+    m_cache_frame = s_current_frame;
+    return m_cached_world;
 }
 
 Vec2 Node2D::get_global_position() const
@@ -71,10 +98,9 @@ float Node2D::get_global_rotation() const
     const Node* current = m_parent;
     while (current)
     {
-        const Node2D* parent2d = dynamic_cast<const Node2D*>(current);
-        if (parent2d)
+        if (current->is_node2d())
         {
-            total += parent2d->rotation;
+            total += static_cast<const Node2D*>(current)->rotation;
         }
         current = current->get_parent();
     }
@@ -104,23 +130,22 @@ void Node2D::rotate_by(float degrees)
 
 void Node2D::advance(float dt)
 {
-    position.x += cos(rotation * DEG_TO_RAD) * dt;
-    position.y += sin(rotation * DEG_TO_RAD) * dt;
-
+    const float rad = rotation * DEG_TO_RAD;
+    position.x += std::cos(rad) * dt;
+    position.y += std::sin(rad) * dt;
 }
 
 void Node2D::advance(float dt, float angle)
 {
-    position.x += cos(angle * DEG_TO_RAD) * dt;
-    position.y += sin(angle * DEG_TO_RAD) * dt;
+    const float rad = angle * DEG_TO_RAD;
+    position.x += std::cos(rad) * dt;
+    position.y += std::sin(rad) * dt;
 }
 
 void Node2D::look_at(const Vec2& target)
 {
     Vec2 global_pos = get_global_position();
     Vec2 dir        = target - global_pos;
-
-    // atan2 returns radians; convert to degrees
     rotation = std::atan2(dir.y, dir.x) * RAD_TO_DEG;
 }
 
@@ -131,29 +156,7 @@ Vec2 Node2D::to_global(const Vec2& local_point) const
 
 Vec2 Node2D::to_local(const Vec2& world_point) const
 {
-    // Invert the global transform to go from world -> local
-    Matrix2D g = get_global_transform();
-
-    // Inverse of a 2D affine matrix (no shear = simple formula)
-    float det = g.a * g.d - g.b * g.c;
-
-    if (std::fabs(det) < 1e-6f)
-    {
-        // Degenerate transform (zero scale) - return zero
-        return Vec2(0.0f, 0.0f);
-    }
-
-    float inv_det = 1.0f / det;
-
-    Matrix2D inv;
-    inv.a  =  g.d * inv_det;
-    inv.b  = -g.b * inv_det;
-    inv.c  = -g.c * inv_det;
-    inv.d  =  g.a * inv_det;
-    inv.tx = (g.c * g.ty - g.d * g.tx) * inv_det;
-    inv.ty = (g.b * g.tx - g.a * g.ty) * inv_det;
-
-    return inv.TransformCoords(world_point);
+    return world_to_local(world_point);
 }
 
 void Node2D::set_z_index(int value)

@@ -17,8 +17,9 @@ Sprite2D::Sprite2D(const std::string &p_name)
       blend(0),
       offset(0.0f, 0.0f),
       use_graph_pivot(true),
-     clip_(false)
+      clip_(false)
 {
+    node_type = NodeType::Sprite2D;
 }
 
 void Sprite2D::_draw()
@@ -68,8 +69,12 @@ void Sprite2D::set_clip(const Rectangle &rect)
 void Sprite2D::get_bounds(float &out_x, float &out_y,
                           float &out_w, float &out_h) const
 {
-
     Graph *g = GraphLib::Instance().getGraph(graph);
+    if (!g)
+    {
+        out_x = out_y = out_w = out_h = 0.0f;
+        return;
+    }
     Vec2 gpos = get_global_position();
     out_x = gpos.x - pivot.x * scale.x;
     out_y = gpos.y - pivot.y * scale.y;
