@@ -114,6 +114,7 @@ void NavigationGrid2D::OpenListHeap::update(int node_idx)
 NavigationGrid2D::NavigationGrid2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::NavigationGrid2D;
 }
 
 NavigationGrid2D::~NavigationGrid2D()

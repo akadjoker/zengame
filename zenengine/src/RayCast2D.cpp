@@ -66,6 +66,7 @@ static void CollectTileMaps(Node* node, std::vector<TileMap2D*>& out)
 RayCast2D::RayCast2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::RayCast2D;
 }
 
 void RayCast2D::force_update()

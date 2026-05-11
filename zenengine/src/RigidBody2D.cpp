@@ -48,6 +48,7 @@ static bool aabb_overlap(Rectangle a, Rectangle b, Vec2& pen)
 RigidBody2D::RigidBody2D(const std::string& p_name)
     : CollisionObject2D(p_name)
 {
+    node_type = NodeType::RigidBody2D;
     is_trigger = false;
 }
 

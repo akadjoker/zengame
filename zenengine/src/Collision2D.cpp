@@ -247,9 +247,9 @@ namespace
         float best_overlap = std::numeric_limits<float>::max();
         Vec2 best_axis(1.0f, 0.0f);
 
-        // — eixos do segmento ————————————————————————————————————————————————————
         const std::vector<Vec2> seg_pts = {sa, sb};
 
+        // Generic axis test for polygon edges (segment has non-zero extent on these)
         auto test_axis = [&](const Vec2 &axis) -> bool
         {
             float smin, smax, pmin, pmax;
@@ -266,16 +266,40 @@ namespace
             return true;
         };
 
-        // normal do segmento
+        // — Segment normal axis (special case: segment is zero-thickness) ————————
+        // Both endpoints project to the same value on the normal, so the generic
+        // overlap formula always returns 0.  We compute penetration depth as the
+        // minimum distance the polygon must move along the normal to exit the line.
         const Vec2 seg_normal = SegmentNormal(sa, sb);
-        if (!test_axis(seg_normal))
-            return false;
+        {
+            const float seg_proj = Dot(sa, seg_normal); // == Dot(sb, seg_normal)
+            float pmin, pmax;
+            ProjectPolygon(poly, seg_normal, pmin, pmax);
+
+            // Polygon entirely on one side → separating
+            if (pmin >= seg_proj || pmax <= seg_proj)
+                return false;
+
+            // Polygon straddles the segment line — depth = min penetration side
+            const float overlap = std::min(pmax - seg_proj, seg_proj - pmin);
+            if (overlap < best_overlap)
+            {
+                best_overlap = overlap;
+                best_axis = seg_normal;
+            }
+        }
 
         // — normais do polígono ——————————————————————————————————————————————————
+        // Skip polygon edge normals that are (nearly) parallel to the segment normal
+        // because the segment has zero-thickness on those axes.  The special case
+        // above already handles separation in that direction.
         for (size_t i = 0; i < poly.size(); ++i)
         {
             const Vec2 edge = poly[(i + 1) % poly.size()] - poly[i];
             const Vec2 axis = Normalize(Vec2(-edge.y, edge.x));
+            const float dot_n = std::fabs(Dot(axis, seg_normal));
+            if (dot_n > 0.98f)
+                continue; // handled by segment normal special case
             if (!test_axis(axis))
                 return false;
         }

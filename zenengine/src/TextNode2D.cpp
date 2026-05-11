@@ -9,6 +9,7 @@
 TextNode2D::TextNode2D(const std::string& p_name)
     : Node2D(p_name)
 {
+    node_type = NodeType::TextNode2D;
     // Default: use raylib's built-in font (no file required)
     m_font      = GetFontDefault();
     m_owns_font = false;

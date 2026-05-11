@@ -61,3 +61,4 @@ configure_test_target(test_animation src/test_animation.cpp)
 configure_test_target(test_physics2d src/test_physics2d.cpp)
 
 configure_test_target(test_characterbody_shapes src/test_characterbody_shapes.cpp)
+configure_test_target(test_segment_collision src/test_segment_collision.cpp)
