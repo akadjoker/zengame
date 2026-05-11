@@ -21,6 +21,12 @@ namespace
 
     void ProjectPolygon(const std::vector<Vec2> &pts, const Vec2 &axis, float &out_min, float &out_max)
     {
+        if (pts.empty())
+        {
+            out_min = 0.0f;
+            out_max = 0.0f;
+            return;
+        }
         out_min = Dot(pts[0], axis);
         out_max = out_min;
         for (size_t i = 1; i < pts.size(); ++i)
@@ -146,19 +152,19 @@ namespace
                 best = d;
             }
         }
-        const Vec2 axis = Normalize(best);
-        float cmin, cmax, pmin, pmax;
-        ProjectCircle(center, radius, axis, cmin, cmax);
-        ProjectPolygon(poly, axis, pmin, pmax);
-        const float overlap = std::min(cmax, pmax) - std::max(cmin, pmin);
-        if (overlap <= 0.0f)
+        const Vec2 vertex_axis = Normalize(best);
+        float vcmin, vcmax, vpmin, vpmax;
+        ProjectCircle(center, radius, vertex_axis, vcmin, vcmax);
+        ProjectPolygon(poly, vertex_axis, vpmin, vpmax);
+        const float vertex_overlap = std::min(vcmax, vpmax) - std::max(vcmin, vpmin);
+        if (vertex_overlap <= 0.0f)
         {
             return false;
         }
-        if (overlap < best_overlap)
+        if (vertex_overlap < best_overlap)
         {
-            best_overlap = overlap;
-            best_axis = axis;
+            best_overlap = vertex_overlap;
+            best_axis = vertex_axis;
         }
 
         Vec2 poly_center = ComputeCenter(poly);
@@ -177,17 +183,6 @@ namespace
         return true;
     }
 
-    // Ponto mais próximo do segmento [a, b] ao ponto p
-    Vec2 ClosestPointOnSegment(const Vec2 &a, const Vec2 &b, const Vec2 &p)
-    {
-        const Vec2 ab = b - a;
-        const float len2 = ab.x * ab.x + ab.y * ab.y;
-        if (len2 <= 1e-10f)
-            return a;
-        const float t = std::max(0.0f, std::min(1.0f, Dot(p - a, ab) / len2));
-        return Vec2(a.x + ab.x * t, a.y + ab.y * t);
-    }
-
     // Normal do segmento (perpendicular, aponta para a esquerda do sentido a→b)
     Vec2 SegmentNormal(const Vec2 &a, const Vec2 &b)
     {
@@ -202,7 +197,13 @@ namespace
                           bool one_sided,
                           Contact2D *out)
     {
-        const Vec2 closest = ClosestPointOnSegment(sa, sb, center);
+        const Vec2 ab = sb - sa;
+        const float len2 = ab.x * ab.x + ab.y * ab.y;
+        const float t = len2 > 1e-10f
+            ? std::max(0.0f, std::min(1.0f, Dot(center - sa, ab) / len2))
+            : 0.0f;
+        const bool is_endpoint = (t <= 0.0f || t >= 1.0f);
+        const Vec2 closest = Vec2(sa.x + ab.x * t, sa.y + ab.y * t);
         const Vec2 delta = center - closest;
         const float dist2 = delta.x * delta.x + delta.y * delta.y;
 
@@ -211,8 +212,8 @@ namespace
 
         const Vec2 seg_normal = SegmentNormal(sa, sb);
 
-        // One-sided: ignora colisões vindas de trás
-        if (one_sided && Dot(delta, seg_normal) < 0.0f)
+        // One-sided: só faz sentido na face do segmento, não nos endpoints.
+        if (one_sided && !is_endpoint && Dot(delta, seg_normal) < 0.0f)
             return false;
 
         const float dist = std::sqrt(std::max(dist2, 1e-10f));
@@ -270,11 +271,6 @@ namespace
         if (!test_axis(seg_normal))
             return false;
 
-        // tangente do segmento (para separar pelos endpoints)
-        const Vec2 seg_tangent = Normalize(sb - sa);
-        if (!test_axis(seg_tangent))
-            return false;
-
         // — normais do polígono ——————————————————————————————————————————————————
         for (size_t i = 0; i < poly.size(); ++i)
         {
@@ -290,7 +286,7 @@ namespace
         const Vec2 seg_center = Vec2((sa.x + sb.x) * 0.5f, (sa.y + sb.y) * 0.5f);
         const Vec2 dir = poly_center - seg_center;
 
-        if (one_sided && Dot(dir, seg_normal) > 0.0f)
+        if (one_sided && Dot(dir, seg_normal) < 0.0f)
         {
             // polígono está atrás → ignora
             return false;

@@ -2,7 +2,10 @@
 #include "TileMap2D.hpp"
 #include "Assets.hpp"
 #include "render.hpp"
+#include "filebuffer.hpp"
+#include "tinyxml2.h"
 #include <sstream>
+#include <raylib.h>
 
 TileMap2D::TileMap2D(const std::string& p_name)
     : Node2D(p_name)
@@ -288,6 +291,10 @@ void TileMap2D::_draw()
 
     if (atlas_graph < 0 || width <= 0 || height <= 0)
     {
+        if (show_grid)
+        {
+            render_grid();
+        }
         if (show_ids)
         {
             debug();
@@ -437,4 +444,142 @@ void TileMap2D::render_grid()
             }
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+// load_from_tmx  —  load one tile layer from a .tmx (Tiled XML) file.
+//
+// Supports:
+//   - encoding="csv"  (most common)
+//   - individual <tile gid="N"/> elements
+// The tileset image is loaded automatically via GraphLib.
+// layer_index: 0-based index of the layer to load.
+// Returns false and logs an error on failure; never throws.
+// -----------------------------------------------------------------------------
+bool TileMap2D::load_from_tmx(const char* tmx_path, int layer_index)
+{
+    // 1. Read file
+    FileBuffer file;
+    if (!file.load(tmx_path))
+    {
+        TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: cannot open '%s'", tmx_path);
+        return false;
+    }
+
+    // 2. Parse XML
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(file.c_str(), file.size()) != tinyxml2::XML_SUCCESS)
+    {
+        TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: XML error in '%s': %s",
+                 tmx_path, doc.ErrorStr());
+        return false;
+    }
+
+    tinyxml2::XMLElement* mapElem = doc.FirstChildElement("map");
+    if (!mapElem)
+    {
+        TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: no <map> in '%s'", tmx_path);
+        return false;
+    }
+
+    // 3. Map attributes
+    const int map_w  = mapElem->IntAttribute("width");
+    const int map_h  = mapElem->IntAttribute("height");
+    const int tile_w = mapElem->IntAttribute("tilewidth");
+    const int tile_h = mapElem->IntAttribute("tileheight");
+
+    // 4. Tileset — only the first tileset is used
+    int graph_id  = -1;
+    int firstgid  = 1;
+    int ts_cols   = 0;
+    int ts_space  = 0;
+    int ts_margin = 0;
+
+    const std::string file_dir = GetDirectoryPath(tmx_path);
+
+    if (tinyxml2::XMLElement* tsElem = mapElem->FirstChildElement("tileset"))
+    {
+        firstgid  = tsElem->IntAttribute("firstgid", 1);
+        ts_cols   = tsElem->IntAttribute("columns",  0);
+        ts_space  = tsElem->IntAttribute("spacing",  0);
+        ts_margin = tsElem->IntAttribute("margin",   0);
+
+        if (tinyxml2::XMLElement* imgElem = tsElem->FirstChildElement("image"))
+        {
+            const char* src = imgElem->Attribute("source");
+            if (src)
+            {
+                // Try path relative to the .tmx, then assets/
+                std::string full  = file_dir + "/" + src;
+                graph_id = GraphLib::Instance().load(
+                    GetFileNameWithoutExt(full.c_str()), full.c_str());
+
+                if (graph_id < 0)
+                {
+                    std::string fallback = std::string("assets/") + GetFileName(src);
+                    graph_id = GraphLib::Instance().load(
+                        GetFileNameWithoutExt(fallback.c_str()), fallback.c_str());
+                }
+
+                if (graph_id < 0)
+                    TraceLog(LOG_WARNING,
+                             "TileMap2D::load_from_tmx: tileset image not found: %s", src);
+            }
+        }
+    }
+
+    // 5. Initialise the tilemap
+    init(map_w, map_h, tile_w, tile_h, graph_id);
+    if (ts_cols > 0)
+        set_tileset_info(tile_w, tile_h, ts_space, ts_margin, ts_cols);
+
+    // 6. Find the requested layer
+    tinyxml2::XMLElement* layerElem = mapElem->FirstChildElement("layer");
+    for (int i = 0; i < layer_index && layerElem; ++i)
+        layerElem = layerElem->NextSiblingElement("layer");
+
+    if (!layerElem)
+    {
+        TraceLog(LOG_WARNING, "TileMap2D::load_from_tmx: layer %d not found in '%s'",
+                 layer_index, tmx_path);
+        return false;
+    }
+
+    // 7. Read tile data
+    tinyxml2::XMLElement* dataElem = layerElem->FirstChildElement("data");
+    if (!dataElem)
+    {
+        TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: no <data> element in layer");
+        return false;
+    }
+
+    const char* encoding = dataElem->Attribute("encoding");
+
+    if (encoding && std::string(encoding) == "csv")
+    {
+        // CSV string: "1,2,0,3,..."
+        // shift = firstgid - 1  so that Tiled IDs map to our 1-based IDs
+        const char* text = dataElem->GetText();
+        if (text)
+            load_from_string(std::string(text), firstgid - 1);
+    }
+    else
+    {
+        // Individual <tile gid="N"/> elements
+        int gx = 0, gy = 0;
+        for (tinyxml2::XMLElement* t = dataElem->FirstChildElement("tile");
+             t; t = t->NextSiblingElement("tile"))
+        {
+            const int gid      = t->IntAttribute("gid", 0);
+            const int local_id = (gid == 0) ? 0 : (gid - firstgid + 1);
+            const int safe_id  = (local_id < 0) ? 0 : local_id;
+            if (gx < map_w && gy < map_h)
+                set_tile(gx, gy, Tile2D{static_cast<uint16_t>(safe_id), 0});
+            if (++gx >= map_w) { gx = 0; ++gy; }
+        }
+    }
+
+    TraceLog(LOG_INFO, "TileMap2D::load_from_tmx: '%s' layer=%d %dx%d tile=%dx%d graph=%d",
+             tmx_path, layer_index, map_w, map_h, tile_w, tile_h, graph_id);
+    return true;
 }

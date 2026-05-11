@@ -8,6 +8,12 @@
 #include "Node2D.hpp"
 #include "SpatialHash2D.hpp"
 #include "Collision2D.hpp"
+#include "TileMap2D.hpp"
+#include "StaticBody2D.hpp"
+#include "Collider2D.hpp"
+#include "filebuffer.hpp"
+#include "tinyxml2.h"
+#include <sstream>
 
 static void CollectCollisionObjects(Node* node, std::vector<CollisionObject2D*>& out)
 {
@@ -671,4 +677,216 @@ void SceneTree::collect_tree_lines(const Node* node, int depth, std::vector<std:
     {
         collect_tree_lines(node->get_child(i), depth + 1, out_lines);
     }
+}
+
+// -----------------------------------------------------------------------------
+// load_tilemap_from_tmx
+//
+// Parses a .tmx file and creates one TileMap2D child node per tile layer.
+// All layers share the same tileset (first tileset in the file).
+// Layers are added as children of `parent` in order (layer 0 first).
+// Returns the number of layers created, or -1 on parse error.
+// Never throws — errors reported via TraceLog.
+// -----------------------------------------------------------------------------
+int SceneTree::load_tilemap_from_tmx(const char* tmx_path, Node* parent)
+{
+    if (!parent)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_tilemap_from_tmx: parent is null");
+        return -1;
+    }
+
+    // 1. Read file
+    FileBuffer file;
+    if (!file.load(tmx_path))
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_tilemap_from_tmx: cannot open '%s'", tmx_path);
+        return -1;
+    }
+
+    // 2. Parse XML
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(file.c_str(), file.size()) != tinyxml2::XML_SUCCESS)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_tilemap_from_tmx: XML error in '%s': %s",
+                 tmx_path, doc.ErrorStr());
+        return -1;
+    }
+
+    tinyxml2::XMLElement* mapElem = doc.FirstChildElement("map");
+    if (!mapElem)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_tilemap_from_tmx: no <map> in '%s'", tmx_path);
+        return -1;
+    }
+
+    // 3. Count tile layers
+    int layer_count = 0;
+    for (tinyxml2::XMLElement* e = mapElem->FirstChildElement("layer"); e;
+         e = e->NextSiblingElement("layer"))
+        ++layer_count;
+
+    if (layer_count == 0)
+    {
+        TraceLog(LOG_WARNING, "SceneTree::load_tilemap_from_tmx: no <layer> in '%s'", tmx_path);
+        return 0;
+    }
+
+    // 4. Create one TileMap2D per layer via TileMap2D::load_from_tmx
+    int created = 0;
+    for (int i = 0; i < layer_count; ++i)
+    {
+        std::string layer_name = "TileLayer" + std::to_string(i);
+
+        // Get the actual layer name from XML if available
+        tinyxml2::XMLElement* le = mapElem->FirstChildElement("layer");
+        for (int k = 0; k < i && le; ++k)
+            le = le->NextSiblingElement("layer");
+        if (le && le->Attribute("name"))
+            layer_name = le->Attribute("name");
+
+        TileMap2D* tm = new TileMap2D(layer_name);
+        if (tm->load_from_tmx(tmx_path, i))
+        {
+            parent->add_child(tm);
+            ++created;
+        }
+        else
+        {
+            delete tm;
+            TraceLog(LOG_WARNING,
+                     "SceneTree::load_tilemap_from_tmx: failed to load layer %d", i);
+        }
+    }
+
+    TraceLog(LOG_INFO, "SceneTree::load_tilemap_from_tmx: '%s' -> %d/%d layers",
+             tmx_path, created, layer_count);
+    return created;
+}
+
+// -----------------------------------------------------------------------------
+// load_collision_from_tmx
+//
+// Parses all <objectgroup> elements in a .tmx file.
+// For each <object> creates a StaticBody2D with a Collider2D child:
+//   - plain rect  → Collider2D::Rectangle  (points = rect corners)
+//   - <ellipse/>  → Collider2D::Circle     (radius = min(w,h)/2)
+//   - <polygon/>  → Collider2D::Polygon    (local points from "points" attr)
+// Returns number of bodies created, or -1 on parse error.
+// Never throws — errors via TraceLog.
+// -----------------------------------------------------------------------------
+int SceneTree::load_collision_from_tmx(const char* tmx_path, Node* parent)
+{
+    if (!parent)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_collision_from_tmx: parent is null");
+        return -1;
+    }
+
+    // 1. Read and parse XML
+    FileBuffer file;
+    if (!file.load(tmx_path))
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_collision_from_tmx: cannot open '%s'", tmx_path);
+        return -1;
+    }
+
+    tinyxml2::XMLDocument doc;
+    if (doc.Parse(file.c_str(), file.size()) != tinyxml2::XML_SUCCESS)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_collision_from_tmx: XML error in '%s': %s",
+                 tmx_path, doc.ErrorStr());
+        return -1;
+    }
+
+    tinyxml2::XMLElement* mapElem = doc.FirstChildElement("map");
+    if (!mapElem)
+    {
+        TraceLog(LOG_ERROR, "SceneTree::load_collision_from_tmx: no <map> in '%s'", tmx_path);
+        return -1;
+    }
+
+    int created = 0;
+    int obj_seq = 0;
+
+    // 2. Iterate objectgroups
+    for (tinyxml2::XMLElement* grp = mapElem->FirstChildElement("objectgroup");
+         grp; grp = grp->NextSiblingElement("objectgroup"))
+    {
+        for (tinyxml2::XMLElement* obj = grp->FirstChildElement("object");
+             obj; obj = obj->NextSiblingElement("object"))
+        {
+            const float ox = obj->FloatAttribute("x");
+            const float oy = obj->FloatAttribute("y");
+            const float ow = obj->FloatAttribute("width",  0.0f);
+            const float oh = obj->FloatAttribute("height", 0.0f);
+
+            // Build a unique name: prefer the "name" attribute from the TMX
+            std::string body_name;
+            if (const char* n = obj->Attribute("name"); n && n[0] != '\0')
+                body_name = n;
+            else
+                body_name = "Collision_" + std::to_string(obj_seq);
+            ++obj_seq;
+
+            // Create body
+            StaticBody2D* body = new StaticBody2D(body_name);
+            body->position = Vec2(ox, oy);
+
+            Collider2D* col = new Collider2D("Shape");
+
+            if (obj->FirstChildElement("ellipse"))
+            {
+                // Ellipse → circle at centre of the bounding box
+                col->shape  = Collider2D::ShapeType::Circle;
+                col->radius = std::min(ow, oh) * 0.5f;
+                // Offset collider to centre (Tiled gives top-left for ellipses too)
+                col->position = Vec2(ow * 0.5f, oh * 0.5f);
+            }
+            else if (tinyxml2::XMLElement* polyElem = obj->FirstChildElement("polygon"))
+            {
+                // Polygon — points are space-separated "x,y" pairs, local to object
+                col->shape = Collider2D::ShapeType::Polygon;
+                col->points.clear();
+
+                const char* pts_str = polyElem->Attribute("points");
+                if (pts_str)
+                {
+                    // Parse "x1,y1 x2,y2 ..."
+                    std::istringstream ss(pts_str);
+                    std::string token;
+                    while (ss >> token)
+                    {
+                        const size_t comma = token.find(',');
+                        if (comma != std::string::npos)
+                        {
+                            const float px = std::stof(token.substr(0, comma));
+                            const float py = std::stof(token.substr(comma + 1));
+                            col->points.emplace_back(px, py);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Default: rectangle
+                col->shape = Collider2D::ShapeType::Rectangle;
+                col->points = {
+                    Vec2(0.0f, 0.0f),
+                    Vec2(ow,   0.0f),
+                    Vec2(ow,   oh),
+                    Vec2(0.0f, oh)
+                };
+                col->size = Vec2(ow, oh);
+            }
+
+            body->add_child(col);
+            parent->add_child(body);
+            ++created;
+        }
+    }
+
+    TraceLog(LOG_INFO, "SceneTree::load_collision_from_tmx: '%s' -> %d bodies",
+             tmx_path, created);
+    return created;
 }

@@ -106,6 +106,7 @@ protected:
 
 private:
     void sort_children_for_draw();
+    void set_tree_recursive_internal(SceneTree* tree);
 
     void _do_enter_tree();
     void _do_ready();

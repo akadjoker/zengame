@@ -387,6 +387,8 @@ int GraphLib::loadDIV(const char* filename)
 
 Graph* GraphLib::getGraph(int id)
 {
+    if (graphs.empty())
+        return nullptr;
     if (id < 0 || id >= (int)graphs.size())
         return &graphs[0];  // fallback to default checker
     return &graphs[id];

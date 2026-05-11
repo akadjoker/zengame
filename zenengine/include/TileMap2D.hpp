@@ -38,6 +38,12 @@ public:
 
     void init(int w, int h, int tile_w, int tile_h, int graph_id);
     void set_tileset_info(int tw, int th, int spacing_px, int margin_px, int cols);
+
+    // Load a single layer from a .tmx (Tiled) file into this TileMap2D.
+    // layer_index: 0-based index of the layer to load.
+    // Returns true on success.
+    bool load_from_tmx(const char* tmx_path, int layer_index = 0);
+
     void clear();
     void set_tile(int gx, int gy, const Tile2D& tile);
     Tile2D* get_tile(int gx, int gy);

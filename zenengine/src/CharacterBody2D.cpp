@@ -219,6 +219,11 @@ CollisionObject2D* CharacterBody2D::place_meeting(float x, float y)
     return hit;
 }
 
+bool CharacterBody2D::move_and_collide(const Vec2& motion, CollisionInfo2D* result)
+{
+    return move_and_collide(motion.x, motion.y, result);
+}
+
 bool CharacterBody2D::move_and_collide(float vel_x, float vel_y, CollisionInfo2D* result)
 {
     Collider2D* self_col = get_collider();
@@ -313,6 +318,24 @@ bool CharacterBody2D::move_and_collide(float vel_x, float vel_y, CollisionInfo2D
     }
 
     return true;
+}
+
+bool CharacterBody2D::move_and_stop(Vec2& velocity, float dt, CollisionInfo2D* result)
+{
+    CollisionInfo2D local_result;
+    CollisionInfo2D* out = result ? result : &local_result;
+    out->hit = false;
+    out->collider = nullptr;
+    out->normal = Vec2();
+    out->depth = 0.0f;
+
+    const Vec2 motion = velocity * dt;
+    const bool hit = move_and_collide(motion.x, motion.y, out);
+    if (hit)
+    {
+        velocity = Vec2();
+    }
+    return hit;
 }
 
 bool CharacterBody2D::snap_to_floor(float snap_len, const Vec2& up_direction, Vec2& velocity)

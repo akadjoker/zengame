@@ -26,3 +26,14 @@
 ## Optimization & Tooling
 - [ ] Memory pooling for frequently created/destroyed nodes (e.g., bullets, particles).
 - [ ] In-game debug console or visual editor inspector.
+
+
+🔴 Alta	AnimatedSprite2D	Qualquer jogo com sprites animados (spritesheet)
+🔴 Alta	RigidBody2D	Física com gravidade/impulsos
+🔴 Alta	Timer	Cooldowns, delays, spawn
+🟡 Média	Tween	Animações de propriedades (UI, câmera)
+🟡 Média	RayCast2D	Line-of-sight, shooting
+🟡 Média	Button / Label (UI)	HUDs, menus
+🟡 Média	AudioStreamPlayer	Som/música (raylib já tem)
+🟢 Baixa	Line2D / Polygon2D	Debug/gizmos
+🟢 Baixa	Scene instancing (.zen files)	
