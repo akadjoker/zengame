@@ -423,6 +423,7 @@ namespace Collision2D
         out_contact->hit = false;
         out_contact->depth = 0.0f;
         out_contact->normal = Vec2();
+        out_contact->point = Vec2();
 
         if (!CheckCollisionRecs(a.get_world_aabb(), b.get_world_aabb()))
         {

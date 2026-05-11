@@ -10,6 +10,7 @@ struct Contact2D
     bool  hit   = false;
     Vec2  normal;
     float depth = 0.0f;
+    Vec2  point;        // approximate contact point in world space
 };
 
 namespace Collision2D

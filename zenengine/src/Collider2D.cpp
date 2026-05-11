@@ -80,7 +80,8 @@ Vec2 Collider2D::get_world_center() const
 
     if (shape == ShapeType::Rectangle)
     {
-        return m.TransformCoords(Vec2(size.x * 0.5f, size.y * 0.5f));
+        // Rectangle is centered on local origin
+        return Vec2(m.tx, m.ty);
     }
 
     if (shape == ShapeType::Segment)
@@ -119,10 +120,12 @@ void Collider2D::get_world_polygon(std::vector<Vec2>& out_points) const
 
     if (shape == ShapeType::Rectangle)
     {
-        out_points.push_back(m.TransformCoords(Vec2(0.0f, 0.0f)));
-        out_points.push_back(m.TransformCoords(Vec2(size.x, 0.0f)));
-        out_points.push_back(m.TransformCoords(Vec2(size.x, size.y)));
-        out_points.push_back(m.TransformCoords(Vec2(0.0f, size.y)));
+        const float hx = size.x * 0.5f;
+        const float hy = size.y * 0.5f;
+        out_points.push_back(m.TransformCoords(Vec2(-hx, -hy)));
+        out_points.push_back(m.TransformCoords(Vec2( hx, -hy)));
+        out_points.push_back(m.TransformCoords(Vec2( hx,  hy)));
+        out_points.push_back(m.TransformCoords(Vec2(-hx,  hy)));
         return;
     }
 

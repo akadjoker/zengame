@@ -27,9 +27,10 @@ public:
     Vec2  linear_velocity  = {0.0f, 0.0f};
     float angular_velocity = 0.0f;        // degrees per second
     float mass             = 1.0f;
+    float inertia          = 0.0f;        // moment of inertia (auto-computed if 0)
     float gravity_scale    = 1.0f;        // 0 = no gravity
     float linear_damping   = 0.0f;        // 0..1 per second
-    float angular_damping  = 0.05f;
+    float angular_damping  = 0.3f;
     float bounciness       = 0.2f;        // 0 = no bounce, 1 = perfect bounce
     float friction         = 0.1f;        // applied on contact tangent
 

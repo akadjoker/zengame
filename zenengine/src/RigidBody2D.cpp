@@ -129,6 +129,30 @@ void RigidBody2D::integrate(float dt)
     {
         rotation += angular_velocity * dt;
     }
+    invalidate_transform();
+}
+
+// ── Inertia helper ────────────────────────────────────────────────────────────
+
+static float compute_inertia(const Collider2D* col)
+{
+    // Rough moment of inertia for common shapes (about center, mass=1 implicit)
+    if (!col) return 1.0f;
+    switch (col->shape)
+    {
+    case Collider2D::ShapeType::Circle:
+        return 0.5f * col->radius * col->radius; // I = 0.5 * m * r²
+    case Collider2D::ShapeType::Rectangle:
+        return (col->size.x * col->size.x + col->size.y * col->size.y) / 12.0f; // I = m*(w²+h²)/12
+    default:
+        // For polygon/segment, approximate with bounding radius
+        {
+            float max_r2 = 0.0f;
+            for (const Vec2& p : col->points)
+                max_r2 = std::max(max_r2, p.x * p.x + p.y * p.y);
+            return max_r2 * 0.5f;
+        }
+    }
 }
 
 // ── Tile collision ────────────────────────────────────────────────────────────
@@ -184,20 +208,59 @@ void RigidBody2D::resolve_tiles(float /*dt*/)
                     pen.y != 0.0f ? (pen.y > 0.0f ? 1.0f : -1.0f) : 0.0f
                 };
 
-                const float vdot = linear_velocity.x * normal.x +
-                                   linear_velocity.y * normal.y;
-                if (vdot < 0.0f)  // moving into the surface
-                {
-                    // Reflect with bounciness
-                    linear_velocity.x -= (1.0f + bounciness) * vdot * normal.x;
-                    linear_velocity.y -= (1.0f + bounciness) * vdot * normal.y;
+                // Contact arm: from body center toward the colliding cell surface
+                const Vec2 body_center = col->get_world_center();
+                const Vec2 r = Vec2(
+                    body_center.x - normal.x * (col->shape == Collider2D::ShapeType::Circle
+                        ? col->radius : std::min(col->size.x, col->size.y) * 0.5f),
+                    body_center.y - normal.y * (col->shape == Collider2D::ShapeType::Circle
+                        ? col->radius : std::min(col->size.x, col->size.y) * 0.5f)
+                ) - body_center;
 
-                    // Friction on tangent
+                const float invM = (mass > 0.0f) ? 1.0f / mass : 0.0f;
+                const float tI = (inertia > 0.0f) ? inertia : mass * compute_inertia(col);
+                const float invI = (!freeze_rotation && tI > 0.0f) ? 1.0f / tI : 0.0f;
+
+                // Velocity at contact point
+                const float w = angular_velocity * (3.14159265f / 180.0f);
+                const float vcx = linear_velocity.x + (-w * r.y);
+                const float vcy = linear_velocity.y + ( w * r.x);
+
+                const float vn = vcx * normal.x + vcy * normal.y;
+                if (vn < 0.0f)
+                {
+                    const float rn = r.x * normal.y - r.y * normal.x;
+                    const float kN = invM + invI * rn * rn;
+                    const float nMass = (kN > 0.0f) ? 1.0f / kN : 0.0f;
+                    const float jn = -(1.0f + bounciness) * vn * nMass;
+
+                    linear_velocity.x += jn * normal.x * invM;
+                    linear_velocity.y += jn * normal.y * invM;
+                    if (invI > 0.0f)
+                    {
+                        const float crP = r.x * (jn * normal.y) - r.y * (jn * normal.x);
+                        angular_velocity += (crP * invI) * (180.0f / 3.14159265f);
+                    }
+
+                    // Friction impulse
                     const Vec2 tangent = { -normal.y, normal.x };
-                    const float vtang = linear_velocity.x * tangent.x +
-                                        linear_velocity.y * tangent.y;
-                    linear_velocity.x -= friction * vtang * tangent.x;
-                    linear_velocity.y -= friction * vtang * tangent.y;
+                    const float w2 = angular_velocity * (3.14159265f / 180.0f);
+                    const float vt = (linear_velocity.x + (-w2 * r.y)) * tangent.x
+                                   + (linear_velocity.y + ( w2 * r.x)) * tangent.y;
+                    const float rt = r.x * tangent.y - r.y * tangent.x;
+                    const float kT = invM + invI * rt * rt;
+                    const float tMass = (kT > 0.0f) ? 1.0f / kT : 0.0f;
+                    float jt = -vt * tMass;
+                    const float maxF = friction * jn;
+                    jt = std::max(-maxF, std::min(jt, maxF));
+
+                    linear_velocity.x += jt * tangent.x * invM;
+                    linear_velocity.y += jt * tangent.y * invM;
+                    if (invI > 0.0f)
+                    {
+                        const float crT = r.x * (jt * tangent.y) - r.y * (jt * tangent.x);
+                        angular_velocity += (crT * invI) * (180.0f / 3.14159265f);
+                    }
                 }
 
                 // Floor/wall/ceil detection
@@ -207,6 +270,7 @@ void RigidBody2D::resolve_tiles(float /*dt*/)
             }
         }
     }
+    invalidate_transform();
 }
 
 // ── Body collision ────────────────────────────────────────────────────────────
@@ -217,6 +281,9 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
 
     Collider2D* col = get_collider();
     if (!col) return;
+
+    // Auto-compute inertia if not set (I = mass * I_shape)
+    const float I = (inertia > 0.0f) ? inertia : mass * compute_inertia(col);
 
     const Rectangle my_aabb = col->get_world_aabb();
     std::vector<CollisionObject2D*> candidates;
@@ -247,18 +314,95 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
                 normal = -normal;
             }
 
-            // Resolve
+            // Resolve position
             if (!freeze_position)
             {
                 position += normal * contact.depth;
             }
 
-            const float vdot = linear_velocity.x * normal.x +
-                               linear_velocity.y * normal.y;
-            if (vdot < 0.0f)
+            // Contact arm: from center to surface along collision normal
+            // Must use actual shape extent (not penetration depth) for correct coupling
+            float half_extent;
+            switch (col->shape)
             {
-                linear_velocity.x -= (1.0f + bounciness) * vdot * normal.x;
-                linear_velocity.y -= (1.0f + bounciness) * vdot * normal.y;
+            case Collider2D::ShapeType::Circle:
+                half_extent = col->radius;
+                break;
+            case Collider2D::ShapeType::Rectangle:
+                // Project local half-size onto collision normal
+                half_extent = fabsf(normal.x) * col->size.x * 0.5f
+                            + fabsf(normal.y) * col->size.y * 0.5f;
+                break;
+            default:
+                half_extent = std::max(contact.depth, 1.0f);
+                break;
+            }
+            const Vec2 r = normal * (-half_extent);
+
+            // Inverse inertia (angular mass)
+            const float invM = (mass > 0.0f) ? 1.0f / mass : 0.0f;
+            const float invI = (!freeze_rotation && I > 0.0f) ? 1.0f / I : 0.0f;
+
+            // Angular velocity in radians/s
+            const float w = angular_velocity * (3.14159265f / 180.0f);
+
+            // Velocity at contact point: v + cross(w, r)
+            // cross(w, r) in 2D = (-w * r.y, w * r.x)
+            const float vcx = linear_velocity.x + (-w * r.y);
+            const float vcy = linear_velocity.y + ( w * r.x);
+
+            // ── Normal impulse ──────────────────────────────────────────
+            const float vn = vcx * normal.x + vcy * normal.y;
+            if (vn < 0.0f)
+            {
+                // Effective mass along normal: 1/m + (r × n)² / I
+                const float rn = r.x * normal.y - r.y * normal.x;
+                const float kNormal = invM + invI * rn * rn;
+                const float normalMass = (kNormal > 0.0f) ? 1.0f / kNormal : 0.0f;
+
+                const float jn = -(1.0f + bounciness) * vn * normalMass;
+
+                // Apply normal impulse to linear velocity
+                linear_velocity.x += jn * normal.x * invM;
+                linear_velocity.y += jn * normal.y * invM;
+
+                // Apply normal impulse to angular velocity (Y-down: += instead of -=)
+                if (invI > 0.0f)
+                {
+                    const float cross_rP = r.x * (jn * normal.y) - r.y * (jn * normal.x);
+                    angular_velocity += (cross_rP * invI) * (180.0f / 3.14159265f);
+                }
+
+                // ── Tangential (friction) impulse ───────────────────────
+                const Vec2 tangent = Vec2(-normal.y, normal.x);
+
+                // Recompute velocity at contact after normal impulse
+                const float w2 = angular_velocity * (3.14159265f / 180.0f);
+                const float vcx2 = linear_velocity.x + (-w2 * r.y);
+                const float vcy2 = linear_velocity.y + ( w2 * r.x);
+                const float vt = vcx2 * tangent.x + vcy2 * tangent.y;
+
+                // Effective mass along tangent
+                const float rt = r.x * tangent.y - r.y * tangent.x;
+                const float kTangent = invM + invI * rt * rt;
+                const float tangentMass = (kTangent > 0.0f) ? 1.0f / kTangent : 0.0f;
+
+                float jt = -vt * tangentMass;
+
+                // Coulomb clamp: |friction impulse| <= friction * normal impulse
+                const float maxFriction = friction * jn;
+                jt = std::max(-maxFriction, std::min(jt, maxFriction));
+
+                // Apply tangent impulse to linear velocity
+                linear_velocity.x += jt * tangent.x * invM;
+                linear_velocity.y += jt * tangent.y * invM;
+
+                // Apply tangent impulse to angular velocity (Y-down)
+                if (invI > 0.0f)
+                {
+                    const float cross_rT = r.x * (jt * tangent.y) - r.y * (jt * tangent.x);
+                    angular_velocity += (cross_rT * invI) * (180.0f / 3.14159265f);
+                }
             }
 
             if (normal.y > 0.5f)  m_on_floor = true;
@@ -268,4 +412,5 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
             if (on_body_entered) on_body_entered(other);
         }
     }
+    invalidate_transform();
 }
