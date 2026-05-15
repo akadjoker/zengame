@@ -29,7 +29,7 @@ public:
     int tile_height = 16;
     int spacing = 0;
     int margin = 0;
-    int columns = 1;
+    int columns = 0;  // 0 = auto-calc from atlas width
     GridType grid_type = GridType::ORTHO;
     float iso_compression = 1.0f;
     Color tint = WHITE;

@@ -5,7 +5,6 @@
 #include "Node2D.hpp"
 #include "View2D.hpp"
 #include "Assets.hpp"
-#include "TextNode2D.hpp"
 #include <raylib.h>
 
 // ----------------------------------------------------------------------------
@@ -18,8 +17,13 @@
 //   C                  -- toggle collision shapes debug
 // ----------------------------------------------------------------------------
 
-static const char* TMX_PATH     = "../assets/shooter.tmx";
-static const char* TMX_COL_PATH = "../assets/shooter.tmx";
+static const char* TMX_MAPS[] = {
+    "../assets/TileMaps/tile_iso_offset.tmx",
+    "../assets/TileMaps/orthogonal-test3.tmx",
+    "../assets/TileMaps/ortho-objects.tmx",
+    "../assets/TileMaps/iso-test2.tmx",
+};
+static const int TMX_MAP_COUNT = 4;
 
 // ----------------------------------------------------------------------------
 // CollisionDebugOverlay
@@ -76,10 +80,49 @@ public:
 class TilemapDemo : public Node
 {
 public:
-    View2D*               camera  = nullptr;
-    CollisionDebugOverlay* overlay = nullptr;
+    View2D*               camera     = nullptr;
+    CollisionDebugOverlay* overlay   = nullptr;
+    int                   map_index  = 0;
 
     TilemapDemo() : Node("TilemapDemo") {}
+
+    void load_map(int index)
+    {
+        // Remove old tile layers and bodies (keep camera and overlay)
+        std::vector<Node*> to_remove;
+        for (size_t i = 0; i < get_child_count(); ++i)
+        {
+            Node* ch = get_child(i);
+            if (ch != camera && ch != overlay)
+                to_remove.push_back(ch);
+        }
+        for (Node* n : to_remove)
+        {
+            remove_child(n);
+            delete n;
+        }
+        overlay->bodies.clear();
+
+        const char* path = TMX_MAPS[index];
+        const int layers = m_tree->load_tilemap_from_tmx(path, this);
+        TraceLog(LOG_INFO, "[%d] %s — %d layers", index, path, layers);
+
+        // Force show_ids so we can always see tile data even if texture fails
+        for (size_t i = 0; i < get_child_count(); ++i)
+            if (auto* tm = dynamic_cast<TileMap2D*>(get_child(i)))
+                tm->show_ids = true;
+
+        const int col_count = m_tree->load_collision_from_tmx(path, this);
+        TraceLog(LOG_INFO, "Loaded %d collision bodies", col_count);
+
+        for (size_t i = 0; i < get_child_count(); ++i)
+            if (auto* sb = dynamic_cast<StaticBody2D*>(get_child(i)))
+                overlay->bodies.push_back(sb);
+
+        // Move overlay to end so it draws on top
+        remove_child(overlay);
+        add_child(overlay);
+    }
 
     void _ready() override
     {
@@ -90,46 +133,10 @@ public:
         camera->position   = Vec2(300, 300);
         add_child(camera);
 
-        // Load all tile layers -- each becomes a TileMap2D child node
-        const int layers = m_tree->load_tilemap_from_tmx(TMX_PATH, this);
-        TraceLog(LOG_INFO, "Loaded %d tile layers", layers);
-
-        // Load collision objects from the objectgroup tmx
-        const int col_count = m_tree->load_collision_from_tmx(TMX_COL_PATH, this);
-        TraceLog(LOG_INFO, "Loaded %d collision bodies", col_count);
-
-        // Overlay node added LAST so propagate_draw() calls it after all tiles
         overlay = new CollisionDebugOverlay();
-        for (size_t i = 0; i < get_child_count(); ++i)
-            if (auto* sb = dynamic_cast<StaticBody2D*>(get_child(i)))
-                overlay->bodies.push_back(sb);
         add_child(overlay);
 
-
-
-        // Uso básico (fonte default)
-        auto* label = new TextNode2D("Label");
-        label->text      = "Score: 0";
-        label->font_size = 24.0f;
-        label->color     = YELLOW;
-        label->position  = Vec2(100, 50);
-        add_child(label);
-
-        // Com fonte TTF
-        label->load_font("assets/fonts/arial.ttf", 64); // glyph_size = qualidade
-        label->font_size = 32.0f; // tamanho de draw (independente do glyph_size)
-
-        // Pivot / âncora
-        label->pivot = Vec2(0.5f, 0.5f); // centrado
-        label->pivot = Vec2(0.0f, 0.0f); // top-left (default)
-
-        // Medir tamanho
-        Vec2 sz = label->measure(); // {width, height} em pixels
-
-        // Herda todo o transform de Node2D
-        label->rotation = 0.0f;
-        label->scale    = Vec2(2.0f, 2.0f);
-
+        load_map(map_index);
     }
 
     void _update(float dt) override
@@ -152,18 +159,29 @@ public:
 
         if (IsKeyPressed(KEY_C))
             overlay->show_col = !overlay->show_col;
+
+        if (IsKeyPressed(KEY_TAB))
+        {
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                map_index = (map_index - 1 + TMX_MAP_COUNT) % TMX_MAP_COUNT;
+            else
+                map_index = (map_index + 1) % TMX_MAP_COUNT;
+            load_map(map_index);
+        }
     }
 
     // _draw() of the ROOT runs BEFORE children -- use it only for HUD
     void _draw() override
     {
-        DrawRectangle(0, 0, 430, 80, Color{0, 0, 0, 160});
-        DrawText("Arrows/WASD: pan   +/-: zoom",      8,  8, 16, WHITE);
-        DrawText("G: toggle grid   C: toggle collision", 8, 28, 16, WHITE);
+        DrawRectangle(0, 0, 480, 96, Color{0, 0, 0, 160});
+        DrawText("Arrows/WASD: pan   +/-: zoom   G: grid   C: col", 8,  8, 16, WHITE);
+        DrawText("Tab: next map   Shift+Tab: prev map",              8, 28, 16, WHITE);
+        const std::string map_name = TMX_MAPS[map_index];
+        DrawText(("Map: " + map_name.substr(map_name.rfind('/') + 1)).c_str(), 8, 48, 16, Color{0, 255, 255, 255});
         const std::string info =
             "Zoom: " + std::to_string((int)(camera->zoom * 100)) + "%" +
             "  Bodies: " + std::to_string((int)overlay->bodies.size());
-        DrawText(info.c_str(), 8, 52, 16, YELLOW);
+        DrawText(info.c_str(), 8, 72, 16, YELLOW);
     }
 };
 

@@ -4,8 +4,6 @@
 #include "render.hpp"
 #include "filebuffer.hpp"
 #include "tinyxml2.h"
-#include <sstream>
-#include <raylib.h>
 
 TileMap2D::TileMap2D(const std::string& p_name)
     : Node2D(p_name)
@@ -29,7 +27,7 @@ void TileMap2D::set_tileset_info(int tw, int th, int spacing_px, int margin_px, 
     tile_height = std::max(1, th);
     spacing = std::max(0, spacing_px);
     margin = std::max(0, margin_px);
-    columns = std::max(1, cols);
+    columns = cols;  // 0 = auto-calc in _draw
 }
 
 void TileMap2D::clear()
@@ -324,7 +322,8 @@ void TileMap2D::_draw()
 
     if (columns <= 0)
     {
-        columns = std::max(1, atlas->width / std::max(1, tile_width + spacing));
+        const int stride = std::max(1, tile_width + spacing);
+        columns = std::max(1, (atlas->width - 2 * margin) / stride);
     }
 
     for (int y = 0; y < height; ++y)
@@ -489,6 +488,16 @@ bool TileMap2D::load_from_tmx(const char* tmx_path, int layer_index)
     const int tile_w = mapElem->IntAttribute("tilewidth");
     const int tile_h = mapElem->IntAttribute("tileheight");
 
+    // Orientation → GridType
+    GridType map_grid = GridType::ORTHO;
+    if (const char* orient = mapElem->Attribute("orientation"))
+    {
+        if (std::string(orient) == "isometric" || std::string(orient) == "staggered")
+            map_grid = GridType::ISOMETRIC;
+        else if (std::string(orient) == "hexagonal")
+            map_grid = GridType::HEXAGON;
+    }
+
     // 4. Tileset — only the first tileset is used
     int graph_id  = -1;
     int firstgid  = 1;
@@ -531,8 +540,8 @@ bool TileMap2D::load_from_tmx(const char* tmx_path, int layer_index)
 
     // 5. Initialise the tilemap
     init(map_w, map_h, tile_w, tile_h, graph_id);
-    if (ts_cols > 0)
-        set_tileset_info(tile_w, tile_h, ts_space, ts_margin, ts_cols);
+    set_tileset_info(tile_w, tile_h, ts_space, ts_margin, ts_cols);
+    grid_type = map_grid;
 
     // 6. Find the requested layer
     tinyxml2::XMLElement* layerElem = mapElem->FirstChildElement("layer");
@@ -554,19 +563,124 @@ bool TileMap2D::load_from_tmx(const char* tmx_path, int layer_index)
         return false;
     }
 
-    const char* encoding = dataElem->Attribute("encoding");
+    const char* encoding    = dataElem->Attribute("encoding");
+    const char* compression = dataElem->Attribute("compression");
 
     if (encoding && std::string(encoding) == "csv")
     {
         // CSV string: "1,2,0,3,..."
-        // shift = firstgid - 1  so that Tiled IDs map to our 1-based IDs
         const char* text = dataElem->GetText();
         if (text)
             load_from_string(std::string(text), firstgid - 1);
     }
+    else if (encoding && std::string(encoding) == "base64")
+    {
+        // base64 [+ zlib/gzip] — use raylib helpers (no external zlib needed)
+        const char* text = dataElem->GetText();
+        if (!text)
+        {
+            TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: empty base64 data");
+            return false;
+        }
+
+        // Strip whitespace around the base64 block
+        std::string b64(text);
+        b64.erase(0, b64.find_first_not_of(" \t\r\n"));
+        b64.erase(b64.find_last_not_of(" \t\r\n") + 1);
+
+        int decoded_size = 0;
+        unsigned char* decoded = DecodeDataBase64(b64.c_str(), &decoded_size);
+        if (!decoded)
+        {
+            TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: base64 decode failed");
+            return false;
+        }
+
+        unsigned char* raw     = decoded;
+        int            raw_size = decoded_size;
+
+        if (compression && (std::string(compression) == "zlib" ||
+                            std::string(compression) == "gzip"))
+        {
+            unsigned char* deflate_data = decoded;
+            int            deflate_size = decoded_size;
+
+            if (std::string(compression) == "zlib" && decoded_size >= 6)
+            {
+                // zlib: 2-byte header (CMF+FLG) + raw DEFLATE + 4-byte adler32
+                deflate_data += 2;
+                deflate_size -= 6;
+            }
+            else if (std::string(compression) == "gzip" && decoded_size >= 18)
+            {
+                // gzip fixed header: 10 bytes
+                // but FEXTRA, FNAME, FCOMMENT fields may extend it — parse flags
+                const unsigned char* hdr = decoded;
+                int hdr_len = 10;
+                if (decoded_size >= 10)
+                {
+                    const uint8_t flg = hdr[3];
+                    if ((flg & 0x04) && decoded_size > hdr_len + 2) // FEXTRA
+                    {
+                        uint16_t xlen = (uint16_t)hdr[hdr_len] | ((uint16_t)hdr[hdr_len+1] << 8);
+                        hdr_len += 2 + xlen;
+                    }
+                    if ((flg & 0x08) && hdr_len < decoded_size) // FNAME
+                        while (hdr_len < decoded_size && hdr[hdr_len++] != 0) {}
+                    if ((flg & 0x10) && hdr_len < decoded_size) // FCOMMENT
+                        while (hdr_len < decoded_size && hdr[hdr_len++] != 0) {}
+                    if ((flg & 0x02) && hdr_len + 2 <= decoded_size) // FHCRC
+                        hdr_len += 2;
+                }
+                deflate_data = decoded + hdr_len;
+                deflate_size = decoded_size - hdr_len - 8; // strip 8-byte footer
+            }
+
+            if (deflate_size <= 0)
+            {
+                MemFree(decoded);
+                TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: compressed data too small");
+                return false;
+            }
+
+            raw = DecompressData(deflate_data, deflate_size, &raw_size);
+            MemFree(decoded);
+            decoded = nullptr;
+
+            if (!raw)
+            {
+                TraceLog(LOG_ERROR, "TileMap2D::load_from_tmx: decompress failed");
+                return false;
+            }
+        }
+
+        // raw is now an array of uint32_t GIDs (little-endian)
+        const int expected = map_w * map_h * 4;
+        if (raw_size < expected)
+        {
+            TraceLog(LOG_WARNING, "TileMap2D::load_from_tmx: raw size %d < expected %d",
+                     raw_size, expected);
+        }
+
+        const int count = raw_size / 4;
+        for (int i = 0; i < count && i < map_w * map_h; ++i)
+        {
+            uint32_t gid = 0;
+            std::memcpy(&gid, raw + i * 4, 4);
+            gid &= 0x1FFFFFFF; // strip flip flags
+
+            const int local_id = (gid == 0) ? 0 : (int)(gid - firstgid + 1);
+            const int safe_id  = (local_id < 0) ? 0 : local_id;
+            const int gx = i % map_w;
+            const int gy = i / map_w;
+            set_tile(gx, gy, Tile2D{static_cast<uint16_t>(safe_id), 0});
+        }
+
+        MemFree(raw);
+    }
     else
     {
-        // Individual <tile gid="N"/> elements
+        // Individual <tile gid="N"/> elements (uncompressed XML)
         int gx = 0, gy = 0;
         for (tinyxml2::XMLElement* t = dataElem->FirstChildElement("tile");
              t; t = t->NextSiblingElement("tile"))
