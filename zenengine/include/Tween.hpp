@@ -12,19 +12,24 @@
 // Interpolates values over time using easing functions.
 // Supports float, Vec2 and Color targets, plus generic lambda setters.
 //
-// Usage:
+// PARALLEL mode (default): all tweeners run simultaneously.
+// SEQUENTIAL mode (sequential=true): tweeners run one after another.
+//   Use delay() to add pauses and call() to fire callbacks mid-sequence.
+//
+// Usage (parallel):
 //   auto* tw = tree.create<Tween>(root, "MoveTween");
-//
-//   // Tween a float pointer
 //   tw->tween_float(&sprite->position.x, 0.0f, 400.0f, 1.5f, TweenEase::OutQuad);
-//
-//   // Tween a Vec2 pointer
 //   tw->tween_vec2(&sprite->position, {0,0}, {400,300}, 1.0f);
-//
-//   // Generic setter lambda (anything)
-//   tw->tween_lambda([&](float t){ sprite->rotation = t * 360.0f; }, 2.0f);
-//
 //   tw->on_finished = [&]{ TraceLog(LOG_INFO, "Done!"); };
+//
+// Usage (sequential):
+//   auto* tw = tree.create<Tween>(root, "Intro");
+//   tw->sequential = true;
+//   tw->tween_vec2(&enemy->position, {-100,300}, {400,300}, 0.4f, TweenEase::OutCubic)
+//     .delay(0.1f)
+//     .tween_float(&enemy->color.a, 255, 0, 0.3f)
+//     .call([&]{ enemy->visible = false; });
+//   tw->start();
 // ----------------------------------------------------------------------------
 
 enum class TweenEase : uint8_t
@@ -69,6 +74,12 @@ public:
     Tween& tween_lambda(std::function<void(float)> setter,
                         float duration, TweenEase ease = TweenEase::Linear);
 
+    // Sequential only: pause for `duration` seconds before the next step.
+    Tween& delay(float duration);
+
+    // Sequential only: fire a callback instantly at this point in the sequence.
+    Tween& call(std::function<void()> fn);
+
     // ── Control ───────────────────────────────────────────────────────────────
     void start   ();    // (re)start from beginning
     void stop    ();
@@ -81,7 +92,8 @@ public:
     bool is_valid  () const { return !m_tweeners.empty(); }
 
     // ── Settings ──────────────────────────────────────────────────────────────
-    TweenLoop loop_mode = TweenLoop::None;
+    TweenLoop loop_mode  = TweenLoop::None;
+    bool      sequential = false;  // if true, steps run one after another
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
     std::function<void()> on_finished;   // called when all tweeners complete
@@ -101,7 +113,8 @@ private:
 
     std::vector<Tweener> m_tweeners;
     float m_elapsed  = 0.0f;
-    float m_duration = 0.0f;   // max duration across all tweeners
+    float m_duration = 0.0f;   // max duration (parallel) or unused (sequential)
+    int   m_step     = 0;      // current step index (sequential mode only)
     bool  m_running  = false;
     bool  m_paused   = false;
     bool  m_reverse  = false;   // for PingPong

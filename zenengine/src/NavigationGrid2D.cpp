@@ -1,10 +1,6 @@
 #include "NavigationGrid2D.hpp"
 #include "TileMap2D.hpp"
 #include "SceneTree.hpp"
-#include <raylib.h>
-#include <cassert>
-#include <cmath>
-#include <algorithm>
 
 // ─── Direcções: cardinal primeiro (i<4), depois diagonal (i>=4) ───────────────
 const int NavigationGrid2D::DX[8] = {  0, 1,  0, -1, -1,  1, 1, -1 };
@@ -465,6 +461,54 @@ std::vector<Vec2> NavigationGrid2D::find_path(
         last_path_.emplace_back(p.x, p.y);
 
     return last_path_;
+}
+
+Vec2 NavigationGrid2D::get_closest_walkable(const Vec2& world_pos) const
+{
+    if (!grid_ || w_ <= 0 || h_ <= 0) return world_pos;
+
+    int gx, gy;
+    world_to_grid(world_pos.x, world_pos.y, gx, gy);
+
+    // If already walkable, return as-is
+    if (in_bounds(gx, gy) && is_walkable_cell(gx, gy))
+        return Vec2((float)(grid_to_world(gx, gy).x), (float)(grid_to_world(gx, gy).y));
+
+    // BFS outward from (gx,gy) to find nearest walkable cell
+    const int max_r = std::max(w_, h_);
+    for (int r = 1; r <= max_r; ++r)
+    {
+        for (int dx = -r; dx <= r; ++dx)
+        {
+            for (int dy = -r; dy <= r; ++dy)
+            {
+                if (abs(dx) != r && abs(dy) != r) continue; // only perimeter
+                const int nx = gx + dx, ny = gy + dy;
+                if (in_bounds(nx, ny) && is_walkable_cell(nx, ny))
+                {
+                    const Vector2 wp = grid_to_world(nx, ny);
+                    return Vec2(wp.x, wp.y);
+                }
+            }
+        }
+    }
+    return world_pos; // no walkable cell found
+}
+
+float NavigationGrid2D::get_last_path_length() const
+{
+    float len = 0.0f;
+    for (size_t i = 1; i < last_path_.size(); ++i)
+        len += last_path_[i].distance(last_path_[i - 1]);
+    return len;
+}
+
+bool NavigationGrid2D::is_walkable(const Vec2& world_pos) const
+{
+    if (!grid_) return false;
+    int gx, gy;
+    world_to_grid(world_pos.x, world_pos.y, gx, gy);
+    return in_bounds(gx, gy) && is_walkable_cell(gx, gy);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

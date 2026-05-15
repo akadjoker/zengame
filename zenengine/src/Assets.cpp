@@ -166,12 +166,12 @@ int GraphLib::addSubGraph(int parentId, const char* name,
 
     const Graph& parent = graphs[parentId];
 
-    Graph g       = {};
-    g.id          = (int)graphs.size();
-    g.texture     = parent.texture;       // reuse same GPU texture
-    g.width       = w;
-    g.height      = h;
-    g.clip        = {(float)x, (float)y, (float)w, (float)h};
+    Graph g    = {};
+    g.id       = (int)graphs.size();
+    g.texture  = parent.texture;
+    g.clip     = {(float)x, (float)y, (float)w, (float)h};
+    g.width    = w;
+    g.height   = h;
     g.points.push_back({(float)w / 2.0f, (float)h / 2.0f});
     strncpy(g.name, name, MAXNAME - 1);
     g.name[MAXNAME - 1] = '\0';

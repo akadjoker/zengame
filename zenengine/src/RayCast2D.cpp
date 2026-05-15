@@ -4,10 +4,7 @@
 #include "TileMap2D.hpp"
 #include "SceneTree.hpp"
 #include "Node.hpp"
-#include <raylib.h>
-#include <cmath>
 #include <cfloat>
-#include <vector>
 
 // ----------------------------------------------------------------------------
 // Ray-vs-AABB slab test

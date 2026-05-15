@@ -58,6 +58,16 @@ public:
         PathAlgorithm algo           = PathAlgorithm::AStar,
         PathHeuristic heur           = PathHeuristic::Octile);
 
+    // Returns the closest walkable cell to world_pos.
+    // Useful when an agent is placed inside a wall / off-grid.
+    Vec2 get_closest_walkable(const Vec2& world_pos) const;
+
+    // World-space length of the last path returned by find_path().
+    float get_last_path_length() const;
+
+    // True if world_pos falls on a walkable cell.
+    bool is_walkable(const Vec2& world_pos) const;
+
     // ── Debug / draw ──────────────────────────────────────────────────────────
     void _draw() override;
     bool show_debug = false;

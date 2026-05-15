@@ -66,7 +66,18 @@ public:
     // ----------------------------------------------------------
 
     float zoom       = 1.0f;   // 1.0 = no zoom, 2.0 = 2x closer
-    bool  is_current = false;  // only one camera active at a time
+    bool  is_current = false;  // set true to activate this camera
+
+    // Normalised viewport on screen (0..1 range).
+    // Default {0,0,1,1} = full screen.
+    // Example split-screen:
+    //   cam_left->viewport_rect  = {0.f, 0.f, 0.5f, 1.f};
+    //   cam_right->viewport_rect = {0.5f, 0.f, 0.5f, 1.f};
+    Rectangle viewport_rect = {0.0f, 0.0f, 1.0f, 1.0f};
+
+    // Draw a solid border around this viewport (0 = disabled).
+    float viewport_border       = 0.0f;
+    Color viewport_border_color = BLACK;
 
     // Screen-space anchor point the camera orbits around.
     // Defaults to centre of the screen set by set_screen_size().
@@ -102,6 +113,10 @@ public:
     // Returns the visible world rectangle (AABB of the viewport)
     void get_viewport_rect(float& out_x, float& out_y,
                            float& out_w, float& out_h) const;
+
+    // Returns true if the world-space circle (center + radius) overlaps the viewport.
+    // Use radius = 0 for a point test, or pass the bounding radius of the node.
+    bool is_on_screen(const Vec2& world_pos, float radius = 0.0f) const;
     void start_shake(float amplitude_x, float amplitude_y, float frequency, float duration_cycles);
     void stop_shake();
     void add_trauma(float amount);

@@ -5,10 +5,6 @@
 #include "TileMap2D.hpp"
 #include "SceneTree.hpp"
 #include "Collision2D.hpp"
-#include <raylib.h>
-#include <cmath>
-#include <vector>
-#include <algorithm>
 
 // ----------------------------------------------------------------------------
 // Helpers (same pattern as CharacterBody2D)
@@ -282,8 +278,8 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
     Collider2D* col = get_collider();
     if (!col) return;
 
-    // Auto-compute inertia if not set (I = mass * I_shape)
-    const float I = (inertia > 0.0f) ? inertia : mass * compute_inertia(col);
+    // Auto-compute inertia for this body (I = mass * I_shape)
+    const float I_a = (inertia > 0.0f) ? inertia : mass * compute_inertia(col);
 
     const Rectangle my_aabb = col->get_world_aabb();
     std::vector<CollisionObject2D*> candidates;
@@ -294,6 +290,14 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
         if (!other || !other->enabled || other->is_trigger) continue;
         if (!Collision2D::CanCollide(collision_layer, collision_mask, other->collision_layer, other->collision_mask)) continue;
 
+        // Detect if the other body is also a RigidBody2D
+        RigidBody2D* other_rb = other->is_a(NodeType::RigidBody2D)
+                                 ? static_cast<RigidBody2D*>(other) : nullptr;
+
+        // For RigidBody2D pairs: only solve from the body with the lower address
+        // to avoid applying the impulse twice (once from each body's _update)
+        if (other_rb && this > other_rb) continue;
+
         std::vector<Collider2D*> other_cols;
         other->get_colliders(other_cols);
 
@@ -302,106 +306,150 @@ void RigidBody2D::resolve_bodies(float /*dt*/)
             if (!oc) continue;
             Contact2D contact;
             if (!Collision2D::Collide(*col, *oc, &contact) || contact.depth <= 0.0f)
-            {
                 continue;
-            }
 
             Vec2 normal = contact.normal;
-            const Vec2 this_center = col->get_world_center();
+            const Vec2 this_center  = col->get_world_center();
             const Vec2 other_center = oc->get_world_center();
             if ((this_center - other_center).dot(normal) < 0.0f)
-            {
                 normal = -normal;
-            }
+            // normal now points from other toward this
 
-            // Resolve position
-            if (!freeze_position)
+            // ── Inverse masses ─────────────────────────────────────────
+            const float invM_a = (mass > 0.0f) ? 1.0f / mass : 0.0f;
+            const float invI_a = (!freeze_rotation && I_a > 0.0f) ? 1.0f / I_a : 0.0f;
+
+            const float I_b    = other_rb ? ((other_rb->inertia > 0.0f) ? other_rb->inertia
+                                              : other_rb->mass * compute_inertia(oc)) : 0.0f;
+            const float invM_b = (other_rb && other_rb->mass > 0.0f) ? 1.0f / other_rb->mass : 0.0f;
+            const float invI_b = (other_rb && !other_rb->freeze_rotation && I_b > 0.0f) ? 1.0f / I_b : 0.0f;
+
+            // ── Position resolution (split by mass) ────────────────────
+            const float total_inv = invM_a + invM_b;
+            if (total_inv > 0.0f)
             {
-                position += normal * contact.depth;
+                if (!freeze_position)
+                    position += normal * contact.depth * (invM_a / total_inv);
+                if (other_rb && !other_rb->freeze_position)
+                    other_rb->position -= normal * contact.depth * (invM_b / total_inv);
             }
 
-            // Contact arm: from center to surface along collision normal
-            // Must use actual shape extent (not penetration depth) for correct coupling
-            float half_extent;
+            // ── Contact arm for body A: from A's center to contact surface ─
+            float half_a;
             switch (col->shape)
             {
             case Collider2D::ShapeType::Circle:
-                half_extent = col->radius;
-                break;
+                half_a = col->radius; break;
             case Collider2D::ShapeType::Rectangle:
-                // Project local half-size onto collision normal
-                half_extent = fabsf(normal.x) * col->size.x * 0.5f
-                            + fabsf(normal.y) * col->size.y * 0.5f;
-                break;
+                half_a = fabsf(normal.x) * col->size.x * 0.5f
+                       + fabsf(normal.y) * col->size.y * 0.5f; break;
             default:
-                half_extent = std::max(contact.depth, 1.0f);
-                break;
+                half_a = std::max(contact.depth, 1.0f); break;
             }
-            const Vec2 r = normal * (-half_extent);
+            const Vec2 r_a = normal * (-half_a); // toward contact (−normal direction)
 
-            // Inverse inertia (angular mass)
-            const float invM = (mass > 0.0f) ? 1.0f / mass : 0.0f;
-            const float invI = (!freeze_rotation && I > 0.0f) ? 1.0f / I : 0.0f;
+            // ── Contact arm for body B: from B's center to contact surface ─
+            float half_b = 0.0f;
+            if (other_rb)
+            {
+                switch (oc->shape)
+                {
+                case Collider2D::ShapeType::Circle:
+                    half_b = oc->radius; break;
+                case Collider2D::ShapeType::Rectangle:
+                    half_b = fabsf(normal.x) * oc->size.x * 0.5f
+                           + fabsf(normal.y) * oc->size.y * 0.5f; break;
+                default:
+                    half_b = std::max(contact.depth, 1.0f); break;
+                }
+            }
+            const Vec2 r_b = normal * half_b; // toward contact (+normal direction from B)
 
-            // Angular velocity in radians/s
-            const float w = angular_velocity * (3.14159265f / 180.0f);
+            // ── Angular velocities in rad/s ────────────────────────────
+            const float w_a = angular_velocity * (3.14159265f / 180.0f);
+            const float w_b = other_rb ? other_rb->angular_velocity * (3.14159265f / 180.0f) : 0.0f;
 
-            // Velocity at contact point: v + cross(w, r)
-            // cross(w, r) in 2D = (-w * r.y, w * r.x)
-            const float vcx = linear_velocity.x + (-w * r.y);
-            const float vcy = linear_velocity.y + ( w * r.x);
+            // Velocity at contact point: v + cross(w, r)  [Y-down: cross = (-w*r.y, w*r.x)]
+            const float vcx_a = linear_velocity.x + (-w_a * r_a.y);
+            const float vcy_a = linear_velocity.y + ( w_a * r_a.x);
+            const float vcx_b = other_rb ? other_rb->linear_velocity.x + (-w_b * r_b.y) : 0.0f;
+            const float vcy_b = other_rb ? other_rb->linear_velocity.y + ( w_b * r_b.x) : 0.0f;
 
-            // ── Normal impulse ──────────────────────────────────────────
-            const float vn = vcx * normal.x + vcy * normal.y;
+            // ── Normal impulse ─────────────────────────────────────────
+            const float vn = (vcx_a - vcx_b) * normal.x + (vcy_a - vcy_b) * normal.y;
             if (vn < 0.0f)
             {
-                // Effective mass along normal: 1/m + (r × n)² / I
-                const float rn = r.x * normal.y - r.y * normal.x;
-                const float kNormal = invM + invI * rn * rn;
-                const float normalMass = (kNormal > 0.0f) ? 1.0f / kNormal : 0.0f;
+                const float rn_a = r_a.x * normal.y - r_a.y * normal.x;
+                const float rn_b = r_b.x * normal.y - r_b.y * normal.x;
+                const float kN   = invM_a + invM_b + invI_a * rn_a * rn_a + invI_b * rn_b * rn_b;
+                const float nMass = (kN > 0.0f) ? 1.0f / kN : 0.0f;
 
-                const float jn = -(1.0f + bounciness) * vn * normalMass;
+                const float e  = other_rb ? std::min(bounciness, other_rb->bounciness) : bounciness;
+                const float jn = -(1.0f + e) * vn * nMass;
 
-                // Apply normal impulse to linear velocity
-                linear_velocity.x += jn * normal.x * invM;
-                linear_velocity.y += jn * normal.y * invM;
-
-                // Apply normal impulse to angular velocity (Y-down: += instead of -=)
-                if (invI > 0.0f)
+                // Apply to A (Y-down: += for angular)
+                linear_velocity.x += jn * normal.x * invM_a;
+                linear_velocity.y += jn * normal.y * invM_a;
+                if (invI_a > 0.0f)
                 {
-                    const float cross_rP = r.x * (jn * normal.y) - r.y * (jn * normal.x);
-                    angular_velocity += (cross_rP * invI) * (180.0f / 3.14159265f);
+                    const float crP_a = r_a.x * (jn * normal.y) - r_a.y * (jn * normal.x);
+                    angular_velocity += (crP_a * invI_a) * (180.0f / 3.14159265f);
                 }
 
-                // ── Tangential (friction) impulse ───────────────────────
+                // Apply reaction to B
+                if (other_rb)
+                {
+                    other_rb->linear_velocity.x -= jn * normal.x * invM_b;
+                    other_rb->linear_velocity.y -= jn * normal.y * invM_b;
+                    if (invI_b > 0.0f)
+                    {
+                        const float crP_b = r_b.x * (jn * normal.y) - r_b.y * (jn * normal.x);
+                        other_rb->angular_velocity -= (crP_b * invI_b) * (180.0f / 3.14159265f);
+                    }
+                }
+
+                // ── Friction impulse ───────────────────────────────────
                 const Vec2 tangent = Vec2(-normal.y, normal.x);
 
-                // Recompute velocity at contact after normal impulse
-                const float w2 = angular_velocity * (3.14159265f / 180.0f);
-                const float vcx2 = linear_velocity.x + (-w2 * r.y);
-                const float vcy2 = linear_velocity.y + ( w2 * r.x);
-                const float vt = vcx2 * tangent.x + vcy2 * tangent.y;
+                // Recompute velocities at contact after normal impulse
+                const float w2_a  = angular_velocity * (3.14159265f / 180.0f);
+                const float w2_b  = other_rb ? other_rb->angular_velocity * (3.14159265f / 180.0f) : 0.0f;
+                const float vcx2_a = linear_velocity.x + (-w2_a * r_a.y);
+                const float vcy2_a = linear_velocity.y + ( w2_a * r_a.x);
+                const float vcx2_b = other_rb ? other_rb->linear_velocity.x + (-w2_b * r_b.y) : 0.0f;
+                const float vcy2_b = other_rb ? other_rb->linear_velocity.y + ( w2_b * r_b.x) : 0.0f;
+                const float vt     = (vcx2_a - vcx2_b) * tangent.x + (vcy2_a - vcy2_b) * tangent.y;
 
-                // Effective mass along tangent
-                const float rt = r.x * tangent.y - r.y * tangent.x;
-                const float kTangent = invM + invI * rt * rt;
-                const float tangentMass = (kTangent > 0.0f) ? 1.0f / kTangent : 0.0f;
+                const float rt_a   = r_a.x * tangent.y - r_a.y * tangent.x;
+                const float rt_b   = r_b.x * tangent.y - r_b.y * tangent.x;
+                const float kT     = invM_a + invM_b + invI_a * rt_a * rt_a + invI_b * rt_b * rt_b;
+                const float tMass  = (kT > 0.0f) ? 1.0f / kT : 0.0f;
 
-                float jt = -vt * tangentMass;
+                float jt = -vt * tMass;
+                const float fr    = other_rb ? sqrtf(friction * other_rb->friction) : friction;
+                const float maxFr = fr * jn;
+                jt = std::max(-maxFr, std::min(jt, maxFr));
 
-                // Coulomb clamp: |friction impulse| <= friction * normal impulse
-                const float maxFriction = friction * jn;
-                jt = std::max(-maxFriction, std::min(jt, maxFriction));
-
-                // Apply tangent impulse to linear velocity
-                linear_velocity.x += jt * tangent.x * invM;
-                linear_velocity.y += jt * tangent.y * invM;
-
-                // Apply tangent impulse to angular velocity (Y-down)
-                if (invI > 0.0f)
+                // Apply to A
+                linear_velocity.x += jt * tangent.x * invM_a;
+                linear_velocity.y += jt * tangent.y * invM_a;
+                if (invI_a > 0.0f)
                 {
-                    const float cross_rT = r.x * (jt * tangent.y) - r.y * (jt * tangent.x);
-                    angular_velocity += (cross_rT * invI) * (180.0f / 3.14159265f);
+                    const float crT_a = r_a.x * (jt * tangent.y) - r_a.y * (jt * tangent.x);
+                    angular_velocity += (crT_a * invI_a) * (180.0f / 3.14159265f);
+                }
+
+                // Apply reaction to B
+                if (other_rb)
+                {
+                    other_rb->linear_velocity.x -= jt * tangent.x * invM_b;
+                    other_rb->linear_velocity.y -= jt * tangent.y * invM_b;
+                    if (invI_b > 0.0f)
+                    {
+                        const float crT_b = r_b.x * (jt * tangent.y) - r_b.y * (jt * tangent.x);
+                        other_rb->angular_velocity -= (crT_b * invI_b) * (180.0f / 3.14159265f);
+                    }
+                    other_rb->invalidate_transform();
                 }
             }
 

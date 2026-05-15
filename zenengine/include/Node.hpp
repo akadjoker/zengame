@@ -1,8 +1,10 @@
 #pragma once
 
 #include "pch.hpp"
+#include "ScriptHost.hpp"
+#include "Signal.hpp"
 
-// Forward declaration
+// Forward declarations
 class SceneTree;
 
 // ============================================================
@@ -39,13 +41,23 @@ enum class NodeType : uint8_t
     TextNode2D          = 11,
     NavigationGrid2D    = 12,
     RayCast2D           = 13,
-    // ── Collision types (must be contiguous at end) ──
+    // ── Collision types (must be contiguous) ──
     Collider2D          = 14,
     CollisionObject2D   = 15,
     CharacterBody2D     = 16,
     StaticBody2D        = 17,
     Area2D              = 18,
     RigidBody2D         = 19,
+    // ── Non-collision Node2D extras ──
+    Path2D              = 20,
+    PathFollow2D        = 21,
+    Line2D              = 22,
+    Rect2D              = 23,
+    Circle2D            = 24,
+    Bone2D              = 25,
+    Skeleton2D          = 26,
+    MotionStreak2D      = 27,
+    DrawNode2D          = 28,
 };
 
 class Node
@@ -108,6 +120,9 @@ public:
     // Find any node by name in subtree (recursive)
     Node*       find_node(const std::string& node_name) const;
 
+    // Godot-style path navigation: "Child", "../Sibling", "/root/Player"
+    Node*       get_node(const std::string& path) const;
+
     // Returns path from root: "Root/Player/Sprite"
     std::string get_path() const;
 
@@ -118,11 +133,38 @@ public:
     void queue_free();
     bool is_queued_for_deletion() const;
 
-    // Fast type checks — avoids dynamic_cast in hot paths
+    // ----------------------------------------------------------
+    // Groups — like Godot add_to_group / is_in_group
+    // ----------------------------------------------------------
+    void add_to_group   (const std::string& group);
+    void remove_from_group(const std::string& group);
+    bool is_in_group    (const std::string& group) const;
+
+    // ----------------------------------------------------------
+    // Signals — Godot-style decoupled communication
+    // ----------------------------------------------------------
+
+    // Connect a signal by name to a callback.
+    // tag = optional identifier for later disconnection (usually `this` of the listener).
+    void connect   (const std::string& signal, SignalCallback cb, void* tag = nullptr);
+
+    // Remove all connections for this signal that have the given tag.
+    void disconnect(const std::string& signal, void* tag);
+
+    // Remove ALL connections to every signal that have the given tag.
+    // Call this from the listener's _on_destroy() to avoid dangling callbacks.
+    void disconnect_all(void* tag);
+
+    // Fire a signal — calls all connected callbacks in order.
+    void emit_signal(const std::string& signal, const SignalArgs& args = {});
+
+    bool has_connections(const std::string& signal) const;
+    void        set_script_host(ScriptHost* host);  // engine takes ownership
+    ScriptHost* get_script_host() const { return m_script_host; }    // Fast type checks — avoids dynamic_cast in hot paths
     bool is_a(NodeType t)   const { return node_type == t; }
     bool is_node2d()        const { return static_cast<uint8_t>(node_type) >= static_cast<uint8_t>(NodeType::Node2D); }
     bool is_collision_obj() const { return static_cast<uint8_t>(node_type) >= static_cast<uint8_t>(NodeType::CollisionObject2D)
-                                        && node_type != NodeType::Collider2D; }
+                                        && static_cast<uint8_t>(node_type) <= static_cast<uint8_t>(NodeType::RigidBody2D); }
 
     // ----------------------------------------------------------
     // Game loop propagation - called by SceneTree, not subclasses
@@ -138,6 +180,9 @@ protected:
     SceneTree*         m_tree;
     bool               m_children_draw_order_dirty;
     bool               m_queued_for_deletion;
+    ScriptHost*        m_script_host = nullptr;
+    std::vector<std::string> m_groups;
+    std::unordered_map<std::string, std::vector<SignalConnection>> m_signals;
 
 private:
     void sort_children_for_draw();

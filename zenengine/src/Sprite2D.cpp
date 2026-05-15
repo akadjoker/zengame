@@ -40,7 +40,6 @@ void Sprite2D::_draw()
 
     if (!clip_)
     {
-
         clip_rect_.x = g->clip.x;
         clip_rect_.y = g->clip.y;
         clip_rect_.width = g->clip.width;
@@ -48,16 +47,9 @@ void Sprite2D::_draw()
     }
 
     RenderTransformFlipClipOffset(
-        *rt,
-        offset,
-        (float)g->width,
-        (float)g->height,
-        clip_rect_,
-        flip_x,
-        flip_y,
-        color,
-        &global,
-        blend);
+        *rt, offset,
+        (float)g->width, (float)g->height,
+        clip_rect_, flip_x, flip_y, color, &global, blend);
 }
 
 void Sprite2D::set_clip(const Rectangle &rect)

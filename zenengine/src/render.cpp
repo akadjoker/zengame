@@ -1,6 +1,5 @@
 #include "render.hpp"
 #include "math.hpp"
-#include <cmath>
 
 
  void RenderQuad(const rQuad *quad)

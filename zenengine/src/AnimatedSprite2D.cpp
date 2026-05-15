@@ -1,8 +1,6 @@
 #include "AnimatedSprite2D.hpp"
 #include "Assets.hpp"
 #include "render.hpp"
-#include <raylib.h>
-#include <cassert>
 
 AnimatedSprite2D::AnimatedSprite2D(const std::string& p_name)
     : Node2D(p_name)

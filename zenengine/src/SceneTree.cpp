@@ -1,6 +1,4 @@
 #include "pch.hpp"
-#include <raylib.h>
-#include <unordered_set>
 #include "SceneTree.hpp"
 #include "View2D.hpp"
 #include "CollisionObject2D.hpp"
@@ -10,10 +8,8 @@
 #include "Collision2D.hpp"
 #include "TileMap2D.hpp"
 #include "StaticBody2D.hpp"
-#include "Collider2D.hpp"
 #include "filebuffer.hpp"
 #include "tinyxml2.h"
-#include <sstream>
 
 static void CollectCollisionObjects(Node* node, std::vector<CollisionObject2D*>& out)
 {
@@ -46,29 +42,27 @@ static uint64_t PairKey(const CollisionObject2D* a, const CollisionObject2D* b)
 
 static View2D* FindCurrentCamera(Node* node)
 {
-    if (!node)
-    {
-        return nullptr;
-    }
-
+    if (!node) return nullptr;
     if (node->is_a(NodeType::View2D))
     {
         View2D* cam = static_cast<View2D*>(node);
-        if (cam->is_current && cam->visible)
-        {
-            return cam;
-        }
+        if (cam->is_current && cam->visible) return cam;
     }
-
     for (size_t i = 0; i < node->get_child_count(); ++i)
-    {
-        if (View2D* child_cam = FindCurrentCamera(node->get_child(i)))
-        {
-            return child_cam;
-        }
-    }
-
+        if (View2D* c = FindCurrentCamera(node->get_child(i))) return c;
     return nullptr;
+}
+
+static void FindAllCameras(Node* node, std::vector<View2D*>& out)
+{
+    if (!node) return;
+    if (node->is_a(NodeType::View2D))
+    {
+        View2D* cam = static_cast<View2D*>(node);
+        if (cam->is_current && cam->visible) out.push_back(cam);
+    }
+    for (size_t i = 0; i < node->get_child_count(); ++i)
+        FindAllCameras(node->get_child(i), out);
 }
 
 static Vec2 SupportPoint(const std::vector<Vec2>& pts, const Vec2& dir)
@@ -150,13 +144,14 @@ SceneTree::SceneTree()
 {
 }
 
-SceneTree::~SceneTree()
+void SceneTree::clean()
 {
     if (m_root)
     {
         set_tree_recursive(m_root, nullptr);
         m_root->_do_exit_tree();
         delete m_root;
+        m_root = nullptr;
     }
 
     if (m_ui_root)
@@ -164,7 +159,13 @@ SceneTree::~SceneTree()
         set_tree_recursive(m_ui_root, nullptr);
         m_ui_root->_do_exit_tree();
         delete m_ui_root;
+        m_ui_root = nullptr;
     }
+}
+
+SceneTree::~SceneTree()
+{
+    clean();
 }
 
 // ----------------------------------------------------------
@@ -219,12 +220,95 @@ Node* SceneTree::get_ui_root() const
     return m_ui_root;
 }
 
+void SceneTree::change_scene_factory(std::function<Node*()> factory)
+{
+    m_pending_scene = std::move(factory);
+}
+
+// ── Fade ──────────────────────────────────────────────────────────────────────
+
+void SceneTree::update_fade(float dt)
+{
+    m_fade_t += dt / m_fade_duration;
+
+    if (m_fade_state == FadeState::Out)
+    {
+        if (m_fade_t >= 1.0f)
+        {
+            // Fully black — swap scene now
+            m_fade_t = 0.0f;
+            m_fade_state = FadeState::In;
+            m_prev_collisions.clear();
+            if (m_pending_scene)
+            {
+                Node* next = m_pending_scene();
+                m_pending_scene = nullptr;
+                set_root(next);
+            }
+        }
+    }
+    else if (m_fade_state == FadeState::In)
+    {
+        if (m_fade_t >= 1.0f)
+        {
+            m_fade_t     = 0.0f;
+            m_fade_state = FadeState::None;
+        }
+    }
+}
+
+void SceneTree::draw_fade_overlay() const
+{
+    if (m_fade_state == FadeState::None) return;
+
+    float alpha;
+    if (m_fade_state == FadeState::Out)
+        alpha = m_fade_t;           // 0 → 1
+    else
+        alpha = 1.0f - m_fade_t;    // 1 → 0
+
+    // Smoothstep for a more cinematic feel
+    alpha = alpha * alpha * (3.0f - 2.0f * alpha);
+
+    const Color overlay = {
+        m_fade_color.r, m_fade_color.g, m_fade_color.b,
+        (unsigned char)(alpha * 255.0f)
+    };
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), overlay);
+}
+
 // ----------------------------------------------------------
 // Game loop
 // ----------------------------------------------------------
 
 void SceneTree::process(float dt)
 {
+    // Fade drives scene swap — handle before anything else.
+    if (m_fade_state != FadeState::None)
+    {
+        update_fade(dt);
+        // While fading, still update the current scene so it doesn't freeze.
+        if (m_root && m_running)
+        {
+            static uint32_t s_frame_counter = 0;
+            Node2D::begin_frame(++s_frame_counter);
+            m_root->propagate_update(dt);
+            update_physics();
+            cleanup_queued_nodes(m_root);
+            cleanup_queued_nodes(m_ui_root);
+        }
+        return;
+    }
+
+    // Apply any instant (non-fade) pending scene change.
+    if (m_pending_scene)
+    {
+        m_prev_collisions.clear();
+        Node* next = m_pending_scene();
+        m_pending_scene = nullptr;
+        set_root(next);
+    }
+
     if (m_root && m_running)
     {
         // Advance the per-frame transform cache counter so all Node2D
@@ -244,29 +328,64 @@ void SceneTree::draw()
     draw_world_pass();
     draw_ui_pass();
     draw_overlay_pass();
+    draw_fade_overlay();
 }
 
 void SceneTree::draw_world_pass()
 {
-    View2D* cam = get_current_camera();
-    if (cam)
-    {
-        cam->screen_center = Vec2(GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f);
-        cam->begin();
-    }
+    const int sw = GetScreenWidth();
+    const int sh = GetScreenHeight();
 
-    if (m_root)
+    std::vector<View2D*> cameras;
+    FindAllCameras(m_root, cameras);
+
+    if (cameras.empty())
     {
-        m_root->propagate_draw();
-        if (m_debug_draw_flags != DEBUG_NONE)
+        // No camera — draw world untransformed
+        if (m_root)
         {
-            draw_debug(m_root);
+            m_root->propagate_draw();
+            if (m_debug_draw_flags != DEBUG_NONE) draw_debug(m_root);
         }
+        return;
     }
 
-    if (cam)
+    for (View2D* cam : cameras)
     {
+        // ── Compute pixel viewport from normalised rect ────────────────────
+        const int px = (int)(cam->viewport_rect.x     * sw);
+        const int py = (int)(cam->viewport_rect.y     * sh);
+        const int pw = (int)(cam->viewport_rect.width  * sw);
+        const int ph = (int)(cam->viewport_rect.height * sh);
+
+        const bool is_sub_viewport =
+            cam->viewport_rect.x     > 0.0f || cam->viewport_rect.y      > 0.0f ||
+            cam->viewport_rect.width < 1.0f || cam->viewport_rect.height  < 1.0f;
+
+        // Update screen_center so world_to_screen / is_on_screen are correct
+        cam->screen_center = Vec2(px + pw * 0.5f, py + ph * 0.5f);
+
+        if (is_sub_viewport)
+            BeginScissorMode(px, py, pw, ph);
+
+        cam->begin();
+
+        if (m_root)
+        {
+            m_root->propagate_draw();
+            if (m_debug_draw_flags != DEBUG_NONE) draw_debug(m_root);
+        }
+
         cam->end();
+
+        if (is_sub_viewport)
+        {
+            EndScissorMode();
+            // Optional border
+            if (cam->viewport_border > 0.0f)
+                DrawRectangleLinesEx({(float)px, (float)py, (float)pw, (float)ph},
+                                     cam->viewport_border, cam->viewport_border_color);
+        }
     }
 }
 
@@ -304,6 +423,34 @@ bool SceneTree::is_running() const
 View2D* SceneTree::get_current_camera() const
 {
     return FindCurrentCamera(m_root);
+}
+
+// ── Groups ────────────────────────────────────────────────────────────────────
+
+static void collect_group(Node* node, const std::string& group, std::vector<Node*>& out)
+{
+    if (!node) return;
+    if (node->is_in_group(group)) out.push_back(node);
+    for (size_t i = 0; i < node->get_child_count(); ++i)
+        collect_group(node->get_child(i), group, out);
+}
+
+void SceneTree::get_nodes_in_group(const std::string& group, std::vector<Node*>& out) const
+{
+    out.clear();
+    collect_group(m_root, group, out);
+}
+
+void SceneTree::call_group(const std::string& group, const char* method)
+{
+    std::vector<Node*> nodes;
+    get_nodes_in_group(group, nodes);
+    for (Node* n : nodes)
+    {
+        ScriptHost* sh = n->get_script_host();
+        if (sh && sh->has_method(method))
+            sh->on_update(n, 0.0f);  // generic dispatch — binding overrides
+    }
 }
 
 void SceneTree::query_collision_candidates(const Rectangle& area,

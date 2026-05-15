@@ -16,11 +16,13 @@ Node::Node(const std::string& p_name)
     , m_tree(nullptr)
     , m_children_draw_order_dirty(false)
     , m_queued_for_deletion(false)
+    , m_script_host(nullptr)
 {
 }
 
 Node::~Node()
 {
+    delete m_script_host;
     for (Node* child : m_children)
     {
         delete child;
@@ -33,18 +35,26 @@ Node::~Node()
 
 void Node::_ready()
 {
+    if (m_script_host && m_script_host->has_method("_ready"))
+        m_script_host->on_ready(this);
 }
 
-void Node::_update(float /*dt*/)
+void Node::_update(float dt)
 {
+    if (m_script_host && m_script_host->has_method("_update"))
+        m_script_host->on_update(this, dt);
 }
 
 void Node::_draw()
 {
+    if (m_script_host && m_script_host->has_method("_draw"))
+        m_script_host->on_draw(this);
 }
 
 void Node::_on_destroy()
 {
+    if (m_script_host && m_script_host->has_method("_on_destroy"))
+        m_script_host->on_destroy(this);
 }
 
 int Node::get_draw_order() const
@@ -163,6 +173,56 @@ Node* Node::find_node(const std::string& node_name) const
     return nullptr;
 }
 
+// Godot-style path: "Child", "../Sibling", "Child/Grandchild", "/root/Name"
+Node* Node::get_node(const std::string& path) const
+{
+    if (path.empty()) return const_cast<Node*>(this);
+
+    // Absolute path starting with '/'
+    if (path[0] == '/')
+    {
+        const Node* root = get_root();
+        // Strip leading '/'
+        std::string rel = path.substr(1);
+        // Strip optional "root/" prefix to match Godot convention
+        if (rel.rfind("root/", 0) == 0) rel = rel.substr(5);
+        return root->get_node(rel);
+    }
+
+    // Walk segments separated by '/'
+    const Node* current = this;
+    std::string rest = path;
+    while (!rest.empty() && current)
+    {
+        std::string seg;
+        auto slash = rest.find('/');
+        if (slash == std::string::npos)
+        {
+            seg  = rest;
+            rest = "";
+        }
+        else
+        {
+            seg  = rest.substr(0, slash);
+            rest = rest.substr(slash + 1);
+        }
+
+        if (seg == ".")
+        {
+            // stay
+        }
+        else if (seg == "..")
+        {
+            current = current->m_parent;
+        }
+        else
+        {
+            current = current->find_child(seg);
+        }
+    }
+    return const_cast<Node*>(current);
+}
+
 std::string Node::get_path() const
 {
     if (!m_parent)
@@ -242,6 +302,88 @@ void Node::queue_free()
 bool Node::is_queued_for_deletion() const
 {
     return m_queued_for_deletion;
+}
+
+// ----------------------------------------------------------
+// Signals
+// ----------------------------------------------------------
+
+void Node::connect(const std::string& signal, SignalCallback cb, void* tag)
+{
+    m_signals[signal].push_back({std::move(cb), tag});
+}
+
+void Node::disconnect(const std::string& signal, void* tag)
+{
+    auto it = m_signals.find(signal);
+    if (it == m_signals.end()) return;
+    auto& vec = it->second;
+    vec.erase(std::remove_if(vec.begin(), vec.end(),
+        [tag](const SignalConnection& c){ return c.tag == tag; }), vec.end());
+}
+
+void Node::disconnect_all(void* tag)
+{
+    for (auto& [sig, vec] : m_signals)
+        vec.erase(std::remove_if(vec.begin(), vec.end(),
+            [tag](const SignalConnection& c){ return c.tag == tag; }), vec.end());
+}
+
+void Node::emit_signal(const std::string& signal, const SignalArgs& args)
+{
+    auto it = m_signals.find(signal);
+    if (it != m_signals.end())
+    {
+        // Copy list — a callback may connect/disconnect during emit
+        std::vector<SignalConnection> snapshot = it->second;
+        for (const auto& conn : snapshot)
+            conn.callback(args);
+    }
+    // Let the script host handle signals connected from script
+    if (m_script_host)
+        m_script_host->on_signal(this, signal.c_str(), args);
+}
+
+bool Node::has_connections(const std::string& signal) const
+{
+    auto it = m_signals.find(signal);
+    return it != m_signals.end() && !it->second.empty();
+}
+
+// ----------------------------------------------------------
+// Script host
+// ----------------------------------------------------------
+
+void Node::set_script_host(ScriptHost* host)
+{
+    delete m_script_host;
+    m_script_host = host;
+}
+
+// ----------------------------------------------------------
+// Groups
+// ----------------------------------------------------------
+
+void Node::add_to_group(const std::string& group)
+{
+    for (const auto& g : m_groups)
+        if (g == group) return;  // already in group
+    m_groups.push_back(group);
+}
+
+void Node::remove_from_group(const std::string& group)
+{
+    for (auto it = m_groups.begin(); it != m_groups.end(); ++it)
+    {
+        if (*it == group) { m_groups.erase(it); return; }
+    }
+}
+
+bool Node::is_in_group(const std::string& group) const
+{
+    for (const auto& g : m_groups)
+        if (g == group) return true;
+    return false;
 }
 
 void Node::sort_children_for_draw()

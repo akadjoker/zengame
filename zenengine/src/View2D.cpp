@@ -1,6 +1,5 @@
 
 #include "pch.hpp"
-#include <raylib.h>
 #include "View2D.hpp"
 
 // ============================================================
@@ -79,6 +78,20 @@ void View2D::get_viewport_rect(float& out_x, float& out_y,
     out_y = tl.y;
     out_w = br.x - tl.x;
     out_h = br.y - tl.y;
+}
+
+bool View2D::is_on_screen(const Vec2& world_pos, float radius) const
+{
+    float vx, vy, vw, vh;
+    get_viewport_rect(vx, vy, vw, vh);
+
+    // AABB vs circle: find closest point on viewport rect to the circle centre,
+    // then check if it's within radius.
+    const float cx = std::clamp(world_pos.x, vx, vx + vw);
+    const float cy = std::clamp(world_pos.y, vy, vy + vh);
+    const float dx = world_pos.x - cx;
+    const float dy = world_pos.y - cy;
+    return (dx * dx + dy * dy) <= (radius * radius);
 }
 
 void View2D::start_shake(float amplitude_x, float amplitude_y, float frequency, float duration_cycles)

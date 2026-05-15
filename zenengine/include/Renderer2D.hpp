@@ -1,11 +1,11 @@
 #pragma once
 
 #include "pch.hpp"
-#include <vector>
 
 class SceneTree;
 class Light2D;
 class ShadowCaster2D;
+class View2D;
 
 class Renderer2D
 {
@@ -103,7 +103,7 @@ private:
     void build_shadow_shader();
 
     void render_light_pass(SceneTree &tree);
-    void render_shadow_pass_for_light(SceneTree &tree, Light2D *light);
+    void render_shadow_pass_for_light(View2D* cam, Light2D* light);
     void render_composite_pass();
     void draw_fullscreen_overlay(Color color, float alpha) const;
 };

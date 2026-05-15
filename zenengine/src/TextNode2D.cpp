@@ -1,5 +1,4 @@
 #include "TextNode2D.hpp"
-#include <raylib.h>
 #include <raymath.h>
 
 // ----------------------------------------------------------------------------

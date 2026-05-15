@@ -74,7 +74,9 @@ Matrix2D Node2D::get_global_transform() const
     if (m_parent && m_parent->is_node2d())
     {
         const Node2D* parent2d = static_cast<const Node2D*>(m_parent);
-        m_cached_world = Matrix2DMult(parent2d->get_global_transform(), local);
+        // Convention: Matrix2DMult(A,B) = "apply A first, then B".
+        // To go from local space to world space we need: local first, then parent.
+        m_cached_world = Matrix2DMult(local, parent2d->get_global_transform());
     }
     else
     {
@@ -181,4 +183,116 @@ int Node2D::get_z_index() const
 int Node2D::get_draw_order() const
 {
     return z_index;
+}
+
+// ----------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------
+
+float Node2D::distance_to(const Vec2& world_point) const
+{
+    return get_global_position().distance(world_point);
+}
+
+float Node2D::distance_to(const Node2D* other) const
+{
+    if (!other) return 0.0f;
+    return get_global_position().distance(other->get_global_position());
+}
+
+Vec2 Node2D::direction_to(const Vec2& world_point) const
+{
+    return (world_point - get_global_position()).normalised();
+}
+
+Vec2 Node2D::direction_to(const Node2D* other) const
+{
+    if (!other) return Vec2(0.0f, 0.0f);
+    return direction_to(other->get_global_position());
+}
+
+Vec2 Node2D::move_toward(const Vec2& target, float max_distance)
+{
+    const Vec2  diff = target - position;
+    const float dist = diff.magnitude();
+    if (dist <= max_distance || dist < 1e-6f)
+        position = target;
+    else
+        position = position + diff * (max_distance / dist);
+    invalidate_transform();
+    return position;
+}
+
+float Node2D::rotate_toward(float target_deg, float max_delta)
+{
+    float diff = target_deg - rotation;
+    // wrap to [-180, 180]
+    while (diff >  180.0f) diff -= 360.0f;
+    while (diff < -180.0f) diff += 360.0f;
+    if (fabsf(diff) <= max_delta)
+        rotation = target_deg;
+    else
+        rotation += (diff > 0.0f ? max_delta : -max_delta);
+    return rotation;
+}
+
+void Node2D::set_global_position(const Vec2& world_pos)
+{
+    if (m_parent && m_parent->is_node2d())
+        position = static_cast<Node2D*>(m_parent)->world_to_local(world_pos);
+    else
+        position = world_pos;
+    invalidate_transform();
+}
+
+// ── Immediate-mode draw helpers ───────────────────────────────────────────────
+
+void Node2D::draw_circle(Vec2 local_pos, float radius, Color c, bool filled) const
+{
+    const Vec2 w = to_global(local_pos);
+    if (filled)
+        DrawCircleV({w.x, w.y}, radius, c);
+    else
+        DrawCircleLinesV({w.x, w.y}, radius, c);
+}
+
+void Node2D::draw_rect(Vec2 local_origin, Vec2 size, Color c, bool filled) const
+{
+    // Transform all four corners then draw as a polygon so rotation is respected.
+    const Vec2 tl = to_global(local_origin);
+    const Vec2 tr = to_global({local_origin.x + size.x, local_origin.y});
+    const Vec2 br = to_global({local_origin.x + size.x, local_origin.y + size.y});
+    const Vec2 bl = to_global({local_origin.x,           local_origin.y + size.y});
+
+    if (filled)
+    {
+        // Two triangles
+        DrawTriangle({tl.x, tl.y}, {bl.x, bl.y}, {br.x, br.y}, c);
+        DrawTriangle({tl.x, tl.y}, {br.x, br.y}, {tr.x, tr.y}, c);
+    }
+    else
+    {
+        DrawLineEx({tl.x, tl.y}, {tr.x, tr.y}, 1.0f, c);
+        DrawLineEx({tr.x, tr.y}, {br.x, br.y}, 1.0f, c);
+        DrawLineEx({br.x, br.y}, {bl.x, bl.y}, 1.0f, c);
+        DrawLineEx({bl.x, bl.y}, {tl.x, tl.y}, 1.0f, c);
+    }
+}
+
+void Node2D::draw_line(Vec2 local_a, Vec2 local_b, Color c, float width) const
+{
+    const Vec2 a = to_global(local_a);
+    const Vec2 b = to_global(local_b);
+    DrawLineEx({a.x, a.y}, {b.x, b.y}, width, c);
+}
+
+void Node2D::draw_triangle(Vec2 a, Vec2 b, Vec2 c_pt, Color c, bool filled) const
+{
+    const Vec2 wa = to_global(a);
+    const Vec2 wb = to_global(b);
+    const Vec2 wc = to_global(c_pt);
+    if (filled)
+        DrawTriangle({wa.x, wa.y}, {wb.x, wb.y}, {wc.x, wc.y}, c);
+    else
+        DrawTriangleLines({wa.x, wa.y}, {wb.x, wb.y}, {wc.x, wc.y}, c);
 }

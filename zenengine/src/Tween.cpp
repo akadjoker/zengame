@@ -1,7 +1,4 @@
 #include "Tween.hpp"
-#include <raylib.h>
-#include <cmath>
-#include <algorithm>
 
 // ----------------------------------------------------------------------------
 // Easing functions  (t in [0..1] → [0..1])
@@ -182,11 +179,30 @@ Tween& Tween::tween_lambda(std::function<void(float)> setter,
     return *this;
 }
 
+Tween& Tween::delay(float duration)
+{
+    m_tweeners.push_back({ [](float){}, duration, TweenEase::Linear });
+    recalc_duration();
+    return *this;
+}
+
+Tween& Tween::call(std::function<void()> fn)
+{
+    // Zero duration: fires instantly when reached in sequence.
+    m_tweeners.push_back({
+        [fn = std::move(fn)](float t) { if (t >= 1.0f) fn(); },
+        0.0f, TweenEase::Linear
+    });
+    recalc_duration();
+    return *this;
+}
+
 // ── Control ───────────────────────────────────────────────────────────────────
 
 void Tween::start()
 {
     m_elapsed = 0.0f;
+    m_step    = 0;
     m_running = true;
     m_paused  = false;
     m_reverse = false;
@@ -208,6 +224,7 @@ void Tween::kill()
     m_tweeners.clear();
     m_elapsed  = 0.0f;
     m_duration = 0.0f;
+    m_step     = 0;
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -216,6 +233,55 @@ void Tween::_update(float dt)
 {
     if (!m_running || m_paused || m_tweeners.empty()) return;
 
+    // ── Sequential mode ──────────────────────────────────────────────────────
+    if (sequential)
+    {
+        m_elapsed += dt;
+
+        while (m_step < (int)m_tweeners.size())
+        {
+            const auto& tw = m_tweeners[m_step];
+
+            if (tw.duration <= 0.0f)
+            {
+                // Instant step (call): fire and advance immediately
+                tw.setter(1.0f);
+                m_elapsed = 0.0f;
+                ++m_step;
+                continue;
+            }
+
+            const float local_t = std::min(m_elapsed / tw.duration, 1.0f);
+            tw.setter(apply_ease(local_t, tw.ease));
+
+            if (m_elapsed < tw.duration) break;  // still in this step
+
+            // Step finished — carry overflow to next
+            m_elapsed -= tw.duration;
+            ++m_step;
+        }
+
+        if (on_step) on_step();
+
+        if (m_step >= (int)m_tweeners.size())
+        {
+            switch (loop_mode)
+            {
+            case TweenLoop::None:
+                m_running = false;
+                if (on_finished) on_finished();
+                break;
+            case TweenLoop::Repeat:
+            case TweenLoop::PingPong:   // sequential PingPong == Repeat for now
+                m_step    = 0;
+                m_elapsed = 0.0f;
+                break;
+            }
+        }
+        return;
+    }
+
+    // ── Parallel mode (original behaviour) ───────────────────────────────────
     m_elapsed += m_reverse ? -dt : dt;
 
     // Clamp and apply all tweeners

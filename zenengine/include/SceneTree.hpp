@@ -4,6 +4,7 @@
 #include "Node.hpp"
 #include "math.hpp"
 #include "SpatialHash2D.hpp"
+#include <functional>
 class View2D;
 class CollisionObject2D;
 class Renderer2D;
@@ -86,9 +87,59 @@ public:
     void  set_root(Node* root);
     Node* get_root() const;
 
+    // Destroy all nodes immediately (call before unloading GPU assets).
+    void  clean();
+
     // Optional UI root drawn after world, without camera transform.
     void  set_ui_root(Node* root);
     Node* get_ui_root() const;
+
+    // Schedule a root swap to happen at the start of the next frame.
+    // Constructs a node of type T, forwarding all arguments to its constructor.
+    // Safe to call from inside _update / callbacks / timers.
+    //
+    // Example:
+    //   tree.change_scene<GameScene>();
+    //   tree.change_scene<Level>("level2.tmx", difficulty);
+    template<typename T, typename... Args>
+    void change_scene(Args&&... args)
+    {
+        m_pending_scene = [args...]() -> Node* { return new T(args...); };
+    }
+
+    // Like change_scene<T> but fades to black, swaps the scene, then fades back.
+    // duration: seconds for each half (fade-out + fade-in).
+    // fade_color: the overlay color (default black).
+    //
+    // Example:
+    //   tree.change_scene_fade<GameScene>(0.4f);
+    //   tree.change_scene_fade<Level>(0.5f, BLACK, "level2.tmx");
+    template<typename T, typename... Args>
+    void change_scene_fade(float duration, Color fade_color, Args&&... args)
+    {
+        m_fade_color    = fade_color;
+        m_fade_duration = duration > 0.0f ? duration : 0.3f;
+        m_fade_t        = 0.0f;
+        m_fade_state    = FadeState::Out;
+        m_pending_scene = [args...]() -> Node* { return new T(args...); };
+    }
+
+    // Convenience overload — fade to black with given duration.
+    template<typename T, typename... Args>
+    void change_scene_fade(float duration, Args&&... args)
+    {
+        change_scene_fade<T>(duration, BLACK, std::forward<Args>(args)...);
+    }
+
+    // Advanced: provide a custom factory lambda if you need extra setup
+    // before _ready() fires (e.g. injecting dependencies, loading saves).
+    //
+    // Example:
+    //   tree.change_scene_factory([]{ auto* s = new Game(); s->load("save.dat"); return s; });
+    void change_scene_factory(std::function<Node*()> factory);
+
+    // True if a scene change is pending (not yet applied).
+    bool is_scene_change_pending() const { return (bool)m_pending_scene; }
 
     // ----------------------------------------------------------
     // Game loop
@@ -100,6 +151,16 @@ public:
     void quit();
     bool is_running() const;
     View2D* get_current_camera() const;
+
+    // ── Groups ────────────────────────────────────────────────────────────────
+    // Collect all nodes in the tree that belong to a group.
+    void get_nodes_in_group(const std::string& group, std::vector<Node*>& out) const;
+
+    // Call a method on every node in a group (if it has a script with that method).
+    // Extra args are passed as raw pointer — the ScriptHost implementation decides
+    // how to marshal them (e.g. zenpy Value array).
+    void call_group(const std::string& group, const char* method);
+
     void query_collision_candidates(const Rectangle& area,
                                     const CollisionObject2D* self,
                                     std::vector<CollisionObject2D*>& out_candidates) const;
@@ -147,6 +208,18 @@ private:
     std::unordered_map<int, CollisionObject2D*> m_physics_by_id;
     std::vector<DebugContact> m_debug_contacts;
     std::unordered_map<uint64_t, std::pair<class CollisionObject2D*, class CollisionObject2D*>> m_prev_collisions;
+
+    std::function<Node*()> m_pending_scene;  // deferred scene change
+
+    // ── Fade transition ───────────────────────────────────────────────────────
+    enum class FadeState : uint8_t { None = 0, Out, In };
+    FadeState m_fade_state    = FadeState::None;
+    float     m_fade_t        = 0.0f;   // [0..1] progress within current half
+    float     m_fade_duration = 0.3f;   // seconds per half
+    Color     m_fade_color    = BLACK;
+
+    void update_fade(float dt);
+    void draw_fade_overlay() const;
 
     friend class Renderer2D;
 };

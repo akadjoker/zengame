@@ -83,14 +83,17 @@ void CollisionObject2D::get_colliders(std::vector<Collider2D*>& out) const
     CollectCollidersRecursive(const_cast<CollisionObject2D*>(this), out);
 }
 
-void CollisionObject2D::on_collision_enter(CollisionObject2D* /*other*/)
+void CollisionObject2D::on_collision_enter(CollisionObject2D* other)
 {
+    if (on_collision_enter_fn) on_collision_enter_fn(other);
 }
 
-void CollisionObject2D::on_collision_stay(CollisionObject2D* /*other*/)
+void CollisionObject2D::on_collision_stay(CollisionObject2D* other)
 {
+    if (on_collision_stay_fn) on_collision_stay_fn(other);
 }
 
-void CollisionObject2D::on_collision_exit(CollisionObject2D* /*other*/)
+void CollisionObject2D::on_collision_exit(CollisionObject2D* other)
 {
+    if (on_collision_exit_fn) on_collision_exit_fn(other);
 }

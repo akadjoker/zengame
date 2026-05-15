@@ -507,19 +507,27 @@ void Renderer2D::render_light_pass(SceneTree &tree)
         if (!light || !light->enabled || !light->visible || !light->active)
             continue;
 
-        BeginTextureMode(m_shadow_rt);
-        ClearBackground(BLANK);
-        EndTextureMode();
-
-        if (shadows_enabled && light->cast_shadows && !m_casters.empty())
-            render_shadow_pass_for_light(tree, light);
-
         const Vec2  wpos   = light->get_global_position();
         const Vec2  spos   = cam ? cam->world_to_screen(wpos) : wpos;
         const float radius = light->radius * zoom;
 
         if (radius <= 0.0f)
             continue;
+
+        // ── Frustum cull: skip lights whose circle doesn't touch the screen ──
+        {
+            const float dx = spos.x - std::clamp(spos.x, 0.0f, sw);
+            const float dy = spos.y - std::clamp(spos.y, 0.0f, sh);
+            if (dx * dx + dy * dy > radius * radius)
+                continue;
+        }
+
+        BeginTextureMode(m_shadow_rt);
+        ClearBackground(BLANK);
+        EndTextureMode();
+
+        if (shadows_enabled && light->cast_shadows && !m_casters.empty())
+            render_shadow_pass_for_light(cam, light);
 
         const float pos[2] = { spos.x, spos.y };
 
@@ -576,12 +584,10 @@ void Renderer2D::render_light_pass(SceneTree &tree)
 
 // ── Shadow pass for one light ────────────────────────────────────────────────
 
-void Renderer2D::render_shadow_pass_for_light(SceneTree &tree, Light2D *light)
+void Renderer2D::render_shadow_pass_for_light(View2D* cam, Light2D *light)
 {
     if (!light)
         return;
-
-    View2D *cam = tree.get_current_camera();
 
     const float zoom = cam ? cam->zoom : 1.0f;
     const float sw   = static_cast<float>(m_rt_width);

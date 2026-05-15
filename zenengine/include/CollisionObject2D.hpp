@@ -2,6 +2,7 @@
 
 #include "pch.hpp"
 #include "Node2D.hpp"
+#include <functional>
 
 class Collider2D;
 
@@ -27,4 +28,9 @@ public:
     virtual void on_collision_enter(CollisionObject2D* other);
     virtual void on_collision_stay(CollisionObject2D* other);
     virtual void on_collision_exit(CollisionObject2D* other);
+
+    // Lambda-based callbacks (alternative to subclassing).
+    std::function<void(CollisionObject2D*)> on_collision_enter_fn;
+    std::function<void(CollisionObject2D*)> on_collision_stay_fn;
+    std::function<void(CollisionObject2D*)> on_collision_exit_fn;
 };
